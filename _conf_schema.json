@@ -1,0 +1,20 @@
+{
+  "tick_seconds": {
+    "description": "虚假行情推进间隔秒数。",
+    "type": "int",
+    "default": 30,
+    "hint": "每次收到命令时会按真实经过时间补推进行情。"
+  },
+  "max_offline_ticks": {
+    "description": "单次命令最多补推进的行情 tick 数。",
+    "type": "int",
+    "default": 240,
+    "hint": "防止离线太久后一次性计算过多。"
+  },
+  "initial_cash": {
+    "description": "新玩家初始现金。",
+    "type": "int",
+    "default": 10000,
+    "hint": "单位美元，最低 100。"
+  }
+}

@@ -1,0 +1,1 @@
+"""Fake forex plugin internals."""

@@ -1,0 +1,10 @@
+name: astrbot_plugin_fake_forex
+display_name: 虚拟外汇
+desc: QQ 官方群聊虚拟外汇交易插件，完全虚假行情，支持按钮、做多做空、保证金、杠杆、爆仓和贷款。
+version: v1.0.0
+author: Codex
+repo: ""
+astrbot_version: ">=4.0.0"
+support_platforms:
+  - qq_official
+  - qq_official_webhook
