@@ -130,3 +130,14 @@ def test_sell_organ_command(tmp_path: Path) -> None:
 
         assert event.bot.api.group_messages
         assert "心脏" in str(event.bot.api.group_messages[-1]["markdown"])
+
+def test_rank_command(tmp_path: Path) -> None:
+    with patch.object(plugin_main.StarTools, "get_data_dir", return_value=tmp_path):
+        plugin = plugin_main.FakeForexPlugin(context=SimpleNamespace(), config={"tick_seconds": 3600})
+        run(plugin.initialize())
+        event = FakeEvent()
+
+        run(collect(plugin.rank_command(event)))
+
+        assert event.bot.api.group_messages
+        assert "排行" in str(event.bot.api.group_messages[-1]["markdown"])

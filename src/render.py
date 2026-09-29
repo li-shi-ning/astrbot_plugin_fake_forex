@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 from pathlib import Path
+from typing import Any
 
 from PIL import Image, ImageDraw, ImageFont
 
@@ -396,5 +397,57 @@ def render_organs(account: Account) -> bytes:
             "已出售" if sold else "未出售",
             font=_font(13, True),
             fill=RED if sold else GREEN,
+        )
+    return _png_bytes(image)
+
+
+def render_leaderboard(entries: list[dict[str, Any]]) -> bytes:
+    """Render a trading P/L leaderboard from best to worst."""
+
+    height = 150 + max(1, len(entries)) * 38
+    image = Image.new("RGB", (WIDTH, height), BG)
+    draw = ImageDraw.Draw(image)
+    _text(draw, (28, 22), "群友盈亏排行", font=_font(26, True), fill=TEXT)
+    _text(
+        draw,
+        (28, 60),
+        "按已实现 + 浮动交易盈亏从赚到亏排序",
+        font=_font(14),
+        fill=MUTED,
+    )
+    if not entries:
+        _text(draw, (28, 110), "暂无排行数据", font=_font(16), fill=MUTED)
+        return _png_bytes(image)
+
+    _text(draw, (36, 104), "排名", font=_font(13), fill=MUTED)
+    _text(draw, (150, 104), "玩家", font=_font(13), fill=MUTED)
+    _text(draw, (520, 104), "交易盈亏", font=_font(13), fill=MUTED)
+    _text(draw, (760, 104), "净值", font=_font(13), fill=MUTED)
+    for index, item in enumerate(entries):
+        top = 132 + index * 38
+        pnl = float(item.get("pnl") or 0)
+        color = GREEN if pnl >= 0 else RED
+        draw.rounded_rectangle((24, top, WIDTH - 24, top + 32), radius=8, fill=PANEL)
+        _text(
+            draw,
+            (44, top + 6),
+            str(item.get("rank") or index + 1),
+            font=_font(15, True),
+            fill=TEXT,
+        )
+        _text(
+            draw,
+            (150, top + 6),
+            str(item.get("name") or "玩家"),
+            font=_font(15, True),
+            fill=TEXT,
+        )
+        _text(draw, (520, top + 6), signed_money(pnl), font=_font(15, True), fill=color)
+        _text(
+            draw,
+            (760, top + 6),
+            money(float(item.get("equity") or 0)),
+            font=_font(14),
+            fill=TEXT,
         )
     return _png_bytes(image)

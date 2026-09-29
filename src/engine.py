@@ -701,6 +701,12 @@ class Account:
     def equity(self, market: Market) -> float:
         return self.cash + self.used_margin() + self.floating_pnl(market) - self.debt
 
+    def trading_pnl(self, market: Market) -> float:
+        """Return realized plus floating trading profit/loss."""
+
+        realized = sum(float(item.get("pnl") or 0) for item in self.history)
+        return realized + self.floating_pnl(market)
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "user_id": self.user_id,

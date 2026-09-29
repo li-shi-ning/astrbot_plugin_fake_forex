@@ -47,6 +47,7 @@ try:
         render_account,
         render_chart,
         render_history,
+        render_leaderboard,
         render_market,
         render_organs,
     )
@@ -85,6 +86,7 @@ except ImportError:  # pragma: no cover - direct local import fallback
         render_account,
         render_chart,
         render_history,
+        render_leaderboard,
         render_market,
         render_organs,
     )
@@ -266,6 +268,12 @@ class FakeForexPlugin(Star):
     )
     async def organs_command(self, event: AstrMessageEvent):
         async for result in self._handle_command(event, "organs"):
+            yield result
+        event.stop_event()
+
+    @filter.command("外汇排行", alias={"排行榜", "盈利排行", "外汇排行榜", "群友排行"})
+    async def rank_command(self, event: AstrMessageEvent):
+        async for result in self._handle_command(event, "rank"):
             yield result
         event.stop_event()
 
@@ -471,6 +479,27 @@ class FakeForexPlugin(Star):
             )
         if command == "organs":
             return self._with_notes(notes, self._organs_outcome(account))
+        if command == "rank":
+            entries: list[dict[str, Any]] = []
+            for player in self.accounts.get(group_id, {}).values():
+                entries.append(
+                    {
+                        "name": player.name,
+                        "pnl": player.trading_pnl(self.market),
+                        "equity": player.equity(self.market),
+                    }
+                )
+            entries.sort(key=lambda item: float(item["pnl"]), reverse=True)
+            for index, item in enumerate(entries, start=1):
+                item["rank"] = index
+            return self._with_notes(
+                notes,
+                CommandOutcome(
+                    text="群友盈亏排行",
+                    image=render_leaderboard(entries),
+                    buttons=self._account_buttons(),
+                ),
+            )
         if command in {"sell_organ", "buy_organ"}:
             organ_id = normalize_organ(text)
             if organ_id is None:
@@ -550,7 +579,7 @@ class FakeForexPlugin(Star):
             "外汇做多 水母水产 500 20\n"
             "外汇做空 水母水产 500 20\n"
             "外汇持仓 / 外汇平仓 编号\n"
-            "外汇账户 / 外汇历史\n"
+            "外汇账户 / 外汇历史 / 外汇排行\n"
             "外汇设置 保证金 500 / 外汇设置 杠杆 20\n"
             "外汇器官 / 外汇卖器官 心脏 / 外汇买器官 心脏\n"
             "外汇借款 10000 / 外汇还款 5000\n"
@@ -620,6 +649,7 @@ class FakeForexPlugin(Star):
             ButtonSpec("fx_menu_account", "账户", "外汇账户"),
             ButtonSpec("fx_menu_positions", "持仓", "外汇持仓"),
             ButtonSpec("fx_menu_history", "历史", "外汇历史"),
+            ButtonSpec("fx_menu_rank", "排行", "外汇排行"),
             ButtonSpec("fx_menu_organs", "器官", "外汇器官"),
             ButtonSpec("fx_menu_borrow", "借款", "外汇借款 10000"),
             ButtonSpec("fx_menu_repay", "还款", "外汇还款 5000"),
@@ -702,6 +732,7 @@ class FakeForexPlugin(Star):
             ButtonSpec("fx_account_market", "行情", "外汇行情"),
             ButtonSpec("fx_account_positions", "持仓", "外汇持仓"),
             ButtonSpec("fx_account_history", "历史", "外汇历史"),
+            ButtonSpec("fx_account_rank", "排行", "外汇排行"),
             ButtonSpec("fx_account_organs", "器官", "外汇器官"),
             ButtonSpec("fx_account_help", "帮助", "外汇帮助"),
         ]
