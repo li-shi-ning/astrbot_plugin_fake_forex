@@ -17,6 +17,7 @@ from src.engine import (  # noqa: E402
     check_liquidations,
     close_position,
     loan_daily_rate,
+    normalize_pair,
     open_position,
     register_instrument,
     repay,
@@ -141,3 +142,9 @@ def test_register_custom_instrument() -> None:
     market = Market.new(random.Random(1))
     assert "TESTX" in market.pairs
     assert market.pairs["TESTX"].price > 0
+
+def test_normalize_pair_accepts_embedded_codes_and_chinese_names() -> None:
+    assert normalize_pair("外汇查看 SMSC") == "SMSC"
+    assert normalize_pair("外汇做多 SMSC 500 20") == "SMSC"
+    assert normalize_pair("外汇查看 水母水产") == "SMSC"
+    assert normalize_pair("外汇做空 芋头股 500 20") == "YTG"

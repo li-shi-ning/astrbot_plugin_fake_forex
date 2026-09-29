@@ -106,19 +106,32 @@ class FxError(ValueError):
 
 
 def normalize_pair(text: str) -> str | None:
-    """Normalize user input such as ``eurusd`` or ``eur/usd``."""
+    """Resolve a stock code or Chinese name from arbitrary user text."""
 
-    compact = (
-        str(text or "")
-        .strip()
-        .upper()
-        .replace(" ", "")
-        .replace("-", "")
-        .replace("/", "")
-    )
-    for pair_id in PAIR_IDS:
-        if compact == pair_id.replace("/", ""):
-            return pair_id
+    raw = str(text or "").strip()
+    if not raw:
+        return None
+    raw_upper = raw.upper()
+
+    # Prefer exact or embedded codes such as ``外汇查看 SMSC``.
+    for item in INSTRUMENT_DEFS:
+        code = item["id"].upper()
+        if code == raw_upper or code in raw_upper:
+            return item["id"]
+
+    # Then accept Chinese names such as ``外汇查看 水母水产``.
+    for item in sorted(
+        INSTRUMENT_DEFS, key=lambda value: len(value["name"]), reverse=True
+    ):
+        if item["name"] in raw:
+            return item["id"]
+
+    # Fallback for compact letter input such as ``sm sc``.
+    letters = re.sub(r"[^A-Za-z0-9]", "", raw).upper()
+    for item in INSTRUMENT_DEFS:
+        code = item["id"].upper()
+        if code in letters:
+            return item["id"]
     return None
 
 
