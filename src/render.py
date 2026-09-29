@@ -6,10 +6,12 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 
 from .engine import (
+    ORGAN_DEFS,
     PAIR_DEFS,
     Account,
     Market,
     money,
+    organ_day_total,
     price_text,
     signed_money,
 )
@@ -347,5 +349,51 @@ def render_history(account: Account, limit: int = 12) -> bytes:
             signed_money(pnl),
             font=_font(15, True),
             fill=color,
+        )
+    return _png_bytes(image)
+
+
+def render_organs(account: Account, day: str) -> bytes:
+    """Render the organ selling catalog and today's sold status."""
+
+    row_height = 34
+    height = 150 + len(ORGAN_DEFS) * row_height + 20
+    image = Image.new("RGB", (WIDTH, height), BG)
+    draw = ImageDraw.Draw(image)
+    _text(draw, (28, 22), "器官回收站", font=_font(26, True), fill=TEXT)
+    _text(
+        draw,
+        (28, 60),
+        f"今日器官收入 {money(organ_day_total(account, day))}",
+        font=_font(15),
+        fill=MUTED,
+    )
+    _text(
+        draw,
+        (WIDTH - 260, 60),
+        "出售不影响交易和健康",
+        font=_font(14, True),
+        fill=YELLOW,
+    )
+    for index, item in enumerate(ORGAN_DEFS):
+        top = 104 + index * row_height
+        sold = account.organ_sold_day.get(item["id"]) == day
+        draw.rounded_rectangle(
+            (24, top, WIDTH - 24, top + row_height - 6), radius=8, fill=PANEL
+        )
+        _text(draw, (40, top + 4), item["name"], font=_font(15, True), fill=TEXT)
+        _text(
+            draw,
+            (360, top + 4),
+            money(float(item["price"])),
+            font=_font(14, True),
+            fill=GREEN,
+        )
+        _text(
+            draw,
+            (WIDTH - 190, top + 4),
+            "今日已卖" if sold else "今日可卖",
+            font=_font(13, True),
+            fill=RED if sold else GREEN,
         )
     return _png_bytes(image)

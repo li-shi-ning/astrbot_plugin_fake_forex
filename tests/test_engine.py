@@ -22,9 +22,12 @@ from src.engine import (  # noqa: E402
     close_position,
     loan_daily_rate,
     normalize_pair,
+    loan_limit,
     open_position,
+    organ_defs,
     register_instrument,
     repay,
+    sell_organ,
     settle_holding_fees,
     tick_market,
 )
@@ -290,3 +293,36 @@ def test_high_volatility_reduces_max_leverage() -> None:
         for value in ([50.0, 100.0] * 20)
     ]
     assert market.max_leverage("SMSC") < 100
+
+def test_sell_organ_once_per_day() -> None:
+    account = Account("u", "Tester")
+    catalog = organ_defs()
+    assert len(catalog) >= 20
+
+    result = sell_organ(account, "心脏", "2026-01-01")
+    assert result["name"] == "心脏"
+    assert account.cash == 10000 + result["price"]
+
+    try:
+        sell_organ(account, "心脏", "2026-01-01")
+    except FxError as exc:
+        assert "今天已经卖过" in str(exc)
+    else:  # pragma: no cover - guard against regression
+        raise AssertionError("same organ should not sell twice per day")
+
+    sell_organ(account, "心脏", "2026-01-02")
+    assert account.cash == 10000 + result["price"] * 2
+
+
+def test_daily_extra_loan_ceiling() -> None:
+    account = Account("u", "Tester")
+    borrow(account, 10000, "2026-01-01")
+    assert loan_limit(account) == 400000
+    assert account.debt == 10000
+
+    borrow(account, 200000, "2026-01-01")
+    assert account.debt == 210000
+
+    borrow(account, 200000, "2026-01-02")
+    assert loan_limit(account) == 600000
+    assert account.debt == 410000

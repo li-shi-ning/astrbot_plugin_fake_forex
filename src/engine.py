@@ -127,6 +127,30 @@ LIQUIDATION_PENALTY_RATE = 0.01
 NEWS_CHANCE = 0.0015
 NEWS_MIN = 0.05
 NEWS_MAX = 0.25
+DAILY_EXTRA_LOAN = 200000.0
+ORGAN_DEFS: list[dict[str, Any]] = [
+    {"id": "heart", "name": "心脏", "price": 80000.0},
+    {"id": "brain", "name": "大脑", "price": 75000.0},
+    {"id": "liver", "name": "肝脏", "price": 50000.0},
+    {"id": "kidney", "name": "肾脏", "price": 45000.0},
+    {"id": "lung", "name": "肺", "price": 40000.0},
+    {"id": "cornea", "name": "眼角膜", "price": 30000.0},
+    {"id": "pancreas", "name": "胰腺", "price": 28000.0},
+    {"id": "marrow", "name": "骨髓", "price": 25000.0},
+    {"id": "stomach", "name": "胃", "price": 18000.0},
+    {"id": "spleen", "name": "脾脏", "price": 15000.0},
+    {"id": "skin", "name": "皮肤", "price": 12000.0},
+    {"id": "bone", "name": "骨骼", "price": 10000.0},
+    {"id": "neuron", "name": "神经", "price": 9000.0},
+    {"id": "intestine", "name": "小肠", "price": 8000.0},
+    {"id": "colon", "name": "大肠", "price": 7000.0},
+    {"id": "thymus", "name": "胸腺", "price": 6000.0},
+    {"id": "gallbladder", "name": "胆囊", "price": 5000.0},
+    {"id": "tonsil", "name": "扁桃体", "price": 4000.0},
+    {"id": "blood", "name": "血液", "price": 3000.0},
+    {"id": "appendix", "name": "阑尾", "price": 2000.0},
+]
+ORGAN_MAP = {item["id"]: item for item in ORGAN_DEFS}
 HISTORY_LIMIT = 25
 CANDLE_LIMIT = 150
 SEED_CANDLES = 76
@@ -164,6 +188,92 @@ def normalize_pair(text: str) -> str | None:
         if code in letters:
             return item["id"]
     return None
+
+
+def organ_defs() -> list[dict[str, Any]]:
+    """Return copies of the organ catalog."""
+
+    return [dict(item) for item in ORGAN_DEFS]
+
+
+def normalize_organ(text: str) -> str | None:
+    """Resolve an organ name or id from user text."""
+
+    raw = str(text or "").strip()
+    if not raw:
+        return None
+    raw_upper = raw.upper()
+    for item in sorted(ORGAN_DEFS, key=lambda value: len(value["name"]), reverse=True):
+        if item["name"] in raw:
+            return item["id"]
+    for item in ORGAN_DEFS:
+        if item["id"].upper() in raw_upper:
+            return item["id"]
+    return None
+
+
+def organ_day_total(account: Account, day: str) -> float:
+    """Return how much the account earned from organs on *day*."""
+
+    return sum(
+        float(item.get("price") or 0)
+        for item in account.organ_history
+        if item.get("day") == day
+    )
+
+
+def sell_organ(account: Account, organ_id: str, day: str) -> dict[str, Any]:
+    """Sell one organ for cash without affecting trading.
+
+    Each organ can be sold once per day.
+
+    Raises:
+        FxError: If the organ is unknown or was already sold today.
+    """
+
+    normalized = normalize_organ(organ_id)
+    if normalized is None:
+        raise FxError("没有这个器官。")
+    if account.organ_sold_day.get(normalized) == day:
+        raise FxError(f"今天已经卖过{ORGAN_MAP[normalized]['name']}了。")
+    item = ORGAN_MAP[normalized]
+    price = float(item["price"])
+    account.cash += price
+    account.organ_sold_day[normalized] = day
+    account.organ_history.insert(
+        0,
+        {
+            "organ": item["name"],
+            "organ_id": normalized,
+            "price": price,
+            "day": day,
+            "time": time.time(),
+        },
+    )
+    del account.organ_history[40:]
+    return {
+        "id": normalized,
+        "name": item["name"],
+        "price": price,
+        "cash": account.cash,
+        "day_total": organ_day_total(account, day),
+    }
+
+
+def loan_limit(account: Account) -> float:
+    """Return the current total loan ceiling."""
+
+    return LOAN_MAX + account.loan_extra_limit
+
+
+def refresh_daily_loan(account: Account, day: str) -> bool:
+    """Add the daily extra loan ceiling once per day."""
+
+    if not day or account.loan_day == day:
+        return False
+    account.loan_day = day
+    account.loan_extra_limit += DAILY_EXTRA_LOAN
+    return True
 
 
 def money(value: float) -> str:
@@ -531,6 +641,10 @@ class Account:
     loan_rate: float = 0.0
     loan_ticks: int = 0
     loan_last_ts: float = 0.0
+    loan_extra_limit: float = 0.0
+    loan_day: str = ""
+    organ_sold_day: dict[str, str] = field(default_factory=dict)
+    organ_history: list[dict[str, Any]] = field(default_factory=list)
     margin_default: float = DEFAULT_MARGIN
     leverage_default: int = DEFAULT_LEVERAGE
     positions: list[Position] = field(default_factory=list)
@@ -556,6 +670,10 @@ class Account:
             "loan_rate": self.loan_rate,
             "loan_ticks": self.loan_ticks,
             "loan_last_ts": self.loan_last_ts,
+            "loan_extra_limit": self.loan_extra_limit,
+            "loan_day": self.loan_day,
+            "organ_sold_day": self.organ_sold_day,
+            "organ_history": self.organ_history,
             "margin_default": self.margin_default,
             "leverage_default": self.leverage_default,
             "positions": [position.to_dict() for position in self.positions],
@@ -576,6 +694,13 @@ class Account:
             loan_rate=float(data.get("loan_rate") or 0) or LOAN_INTEREST_RATE,
             loan_ticks=int(data.get("loan_ticks") or 0),
             loan_last_ts=float(data.get("loan_last_ts") or 0),
+            loan_extra_limit=float(data.get("loan_extra_limit") or 0),
+            loan_day=str(data.get("loan_day") or ""),
+            organ_sold_day={
+                str(key): str(value)
+                for key, value in dict(data.get("organ_sold_day") or {}).items()
+            },
+            organ_history=list(data.get("organ_history") or []),
             margin_default=max(
                 MIN_MARGIN, float(data.get("margin_default") or DEFAULT_MARGIN)
             ),
@@ -737,20 +862,27 @@ def accrue_interest(
     return periods
 
 
-def borrow(account: Account, amount: float) -> float:
-    """Borrow money and increase debt."""
+def borrow(account: Account, amount: float, day: str | None = None) -> float:
+    """Borrow money up to the current loan ceiling.
+
+    The ceiling is the base limit plus any accumulated daily extra limit.
+    """
 
     if amount < 1:
         raise FxError("借款金额至少为 $1。")
-    if amount > LOAN_MAX:
-        raise FxError(f"单次借款上限为 {money(LOAN_MAX)}。")
-    if account.debt > 0:
-        raise FxError("请先还清当前贷款，才能再次借款。")
-    account.debt = float(amount)
-    account.loan_principal = float(amount)
-    account.loan_rate = LOAN_INTEREST_RATE
+    if day:
+        refresh_daily_loan(account, day)
+    limit = loan_limit(account)
+    if account.debt + amount > limit:
+        available = max(0.0, limit - account.debt)
+        raise FxError(f"当前贷款额度上限为 {money(limit)}，还可借 {money(available)}。")
+    account.debt = round(account.debt + float(amount), 2)
+    account.loan_principal = round(account.loan_principal + float(amount), 2)
+    if account.loan_rate <= 0:
+        account.loan_rate = LOAN_INTEREST_RATE
+    if account.loan_last_ts <= 0:
+        account.loan_last_ts = time.time()
     account.loan_ticks = 0
-    account.loan_last_ts = time.time()
     account.cash += float(amount)
     return account.debt
 

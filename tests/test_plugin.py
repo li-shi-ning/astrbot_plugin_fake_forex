@@ -118,3 +118,15 @@ def test_admin_can_add_custom_instrument(tmp_path: Path) -> None:
 
         assert event.bot.api.group_messages
         assert "NEWX" in str(event.bot.api.group_messages[-1]["markdown"])
+
+def test_sell_organ_command(tmp_path: Path) -> None:
+    with patch.object(plugin_main.StarTools, "get_data_dir", return_value=tmp_path):
+        plugin = plugin_main.FakeForexPlugin(context=SimpleNamespace(), config={"tick_seconds": 3600})
+        run(plugin.initialize())
+        event = FakeEvent()
+        event.message_str = "外汇卖器官 心脏"
+
+        run(collect(plugin.sell_organ_command(event)))
+
+        assert event.bot.api.group_messages
+        assert "心脏" in str(event.bot.api.group_messages[-1]["markdown"])

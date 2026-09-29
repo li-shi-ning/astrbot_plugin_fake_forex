@@ -4,6 +4,7 @@ import asyncio
 import base64
 import re
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -22,12 +23,17 @@ try:
         borrow,
         close_position,
         instrument_defs,
+        loan_limit,
         money,
+        normalize_organ,
         normalize_pair,
         open_position,
+        organ_day_total,
+        organ_defs,
         price_text,
         register_instrument,
         repay,
+        sell_organ,
         signed_money,
     )
     from .src.qqofficial import (
@@ -41,6 +47,7 @@ try:
         render_chart,
         render_history,
         render_market,
+        render_organs,
     )
     from .src.storage import FxStore
 except ImportError:  # pragma: no cover - direct local import fallback
@@ -54,12 +61,17 @@ except ImportError:  # pragma: no cover - direct local import fallback
         borrow,
         close_position,
         instrument_defs,
+        loan_limit,
         money,
+        normalize_organ,
         normalize_pair,
         open_position,
+        organ_day_total,
+        organ_defs,
         price_text,
         register_instrument,
         repay,
+        sell_organ,
         signed_money,
     )
     from src.qqofficial import (
@@ -73,11 +85,13 @@ except ImportError:  # pragma: no cover - direct local import fallback
         render_chart,
         render_history,
         render_market,
+        render_organs,
     )
     from src.storage import FxStore
 
 
 PLUGIN_NAME = "astrbot_plugin_fake_forex"
+BEIJING_TZ = timezone(timedelta(hours=8))
 STATE_FILENAME = "fx_state.json"
 
 
@@ -246,6 +260,20 @@ class FakeForexPlugin(Star):
             yield result
         event.stop_event()
 
+    @filter.command(
+        "外汇器官", alias={"器官菜单", "器官回收", "器官列表", "卖器官列表"}
+    )
+    async def organs_command(self, event: AstrMessageEvent):
+        async for result in self._handle_command(event, "organs"):
+            yield result
+        event.stop_event()
+
+    @filter.command("外汇卖器官", alias={"卖器官", "出售器官", "器官出售"})
+    async def sell_organ_command(self, event: AstrMessageEvent):
+        async for result in self._handle_command(event, "sell_organ"):
+            yield result
+        event.stop_event()
+
     # ------------------------------------------------------------------
     # Dispatch
     # ------------------------------------------------------------------
@@ -296,6 +324,7 @@ class FakeForexPlugin(Star):
         account = self._ensure_account(group_id, user_id, name)
         text = self._message_text(event)
         notes = self._take_notes(account)
+        day = self._today()
 
         if command == "menu":
             return self._with_notes(notes, self._menu_outcome())
@@ -402,12 +431,13 @@ class FakeForexPlugin(Star):
             amount = self._amount_arg(text)
             if amount is None:
                 raise FxError("请带上借款金额，例如：外汇借款 10000。")
-            debt = borrow(account, amount)
+            debt = borrow(account, amount, day)
             return self._with_notes(
                 notes,
                 CommandOutcome(
                     text=(
                         f"已借款 {money(amount)}，当前欠款 {money(debt)}，"
+                        f"当前额度上限 {money(loan_limit(account))}，"
                         "每 30 分钟利率 3.00%，复利计息"
                     )
                 ),
@@ -432,6 +462,24 @@ class FakeForexPlugin(Star):
                     buttons=self._account_buttons(),
                 ),
             )
+        if command == "organs":
+            return self._with_notes(notes, self._organs_outcome(account))
+        if command == "sell_organ":
+            organ_id = normalize_organ(text)
+            if organ_id is None:
+                raise FxError("请带上器官名，例如：外汇卖器官 心脏。")
+            result = sell_organ(account, organ_id, day)
+            return self._with_notes(
+                notes,
+                CommandOutcome(
+                    text=(
+                        f"已出售 {result['name']}，到账 {money(result['price'])}；"
+                        f"今日器官收入 {money(result['day_total'])}。"
+                    ),
+                    image=render_organs(account, day),
+                    buttons=self._organ_buttons(account, day),
+                ),
+            )
         if command == "add_instrument":
             if not self._is_admin(event):
                 raise FxError("只有管理员可以添加股票。")
@@ -453,6 +501,30 @@ class FakeForexPlugin(Star):
     # ------------------------------------------------------------------
     # Outcomes and buttons
     # ------------------------------------------------------------------
+    def _organs_outcome(self, account: Account) -> CommandOutcome:
+        day = self._today()
+        return CommandOutcome(
+            text=f"器官回收站，今日已卖 {money(organ_day_total(account, day))}",
+            image=render_organs(account, day),
+            buttons=self._organ_buttons(account, day),
+        )
+
+    def _organ_buttons(self, account: Account, day: str) -> list[ButtonSpec]:
+        buttons: list[ButtonSpec] = []
+        for index, item in enumerate(organ_defs(), start=1):
+            sold = account.organ_sold_day.get(item["id"]) == day
+            price_label = f"{item['price'] / 1000:.0f}k"
+            buttons.append(
+                ButtonSpec(
+                    f"fx_organ_{index}",
+                    f"{item['name']} {price_label}{' 已卖' if sold else ''}",
+                    f"外汇卖器官 {item['name']}",
+                )
+            )
+        buttons.append(ButtonSpec("fx_organ_account", "账户", "外汇账户"))
+        buttons.append(ButtonSpec("fx_organ_help", "帮助", "外汇帮助"))
+        return buttons
+
     def _menu_outcome(self) -> CommandOutcome:
         text = (
             "虚拟外汇\n"
@@ -464,6 +536,7 @@ class FakeForexPlugin(Star):
             "外汇持仓 / 外汇平仓 编号\n"
             "外汇账户 / 外汇历史\n"
             "外汇设置 保证金 500 / 外汇设置 杠杆 20\n"
+            "外汇器官 / 外汇卖器官 心脏\n"
             "外汇借款 10000 / 外汇还款 5000\n"
             "管理员：外汇添加股票 <代码> <名称> <初始价>\n\n"
             "规则：最低保证金 $10，最大杠杆 100x；"
@@ -471,7 +544,8 @@ class FakeForexPlugin(Star):
             "每 30 分钟收持仓费，做空额外收借券费；"
             "波动率越高最大杠杆越低；突发新闻会造成跳空；"
             "爆仓额外收 1% 名义仓位罚金；"
-            "贷款每 30 分钟按 3% 复利计息。"
+            "贷款每 30 分钟按 3% 复利计息；"
+            "基础额度 $200,000，每天额外 +$200,000。"
         )
         return CommandOutcome(text=text, buttons=self._menu_buttons())
 
@@ -530,6 +604,7 @@ class FakeForexPlugin(Star):
             ButtonSpec("fx_menu_account", "账户", "外汇账户"),
             ButtonSpec("fx_menu_positions", "持仓", "外汇持仓"),
             ButtonSpec("fx_menu_history", "历史", "外汇历史"),
+            ButtonSpec("fx_menu_organs", "器官", "外汇器官"),
             ButtonSpec("fx_menu_borrow", "借款", "外汇借款 10000"),
             ButtonSpec("fx_menu_repay", "还款", "外汇还款 5000"),
             ButtonSpec("fx_menu_help", "帮助", "外汇帮助"),
@@ -611,12 +686,16 @@ class FakeForexPlugin(Star):
             ButtonSpec("fx_account_market", "行情", "外汇行情"),
             ButtonSpec("fx_account_positions", "持仓", "外汇持仓"),
             ButtonSpec("fx_account_history", "历史", "外汇历史"),
+            ButtonSpec("fx_account_organs", "器官", "外汇器官"),
             ButtonSpec("fx_account_help", "帮助", "外汇帮助"),
         ]
 
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+    def _today(self) -> str:
+        return datetime.now(BEIJING_TZ).strftime("%Y-%m-%d")
+
     def _identity(self, event: AstrMessageEvent) -> tuple[str, str, str]:
         group_id = str(event.get_group_id() or "")
         user_id = str(event.get_sender_id() or "")
