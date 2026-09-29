@@ -24,11 +24,23 @@ GREEN = (110, 231, 183)
 RED = (248, 113, 113)
 YELLOW = (250, 204, 21)
 
+CJK_FONT_CANDIDATES = [
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/opentype/noto/NotoSerifCJK-Regular.ttc",
+    "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+]
+CJK_BOLD_CANDIDATES = [
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
+    "/usr/share/fonts/opentype/noto/NotoSerifCJK-Bold.ttc",
+    "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+]
 FONT_CANDIDATES = [
+    *CJK_FONT_CANDIDATES,
     "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
     "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
 ]
 FONT_BOLD_CANDIDATES = [
+    *CJK_BOLD_CANDIDATES,
     "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
     "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf",
 ]
@@ -96,12 +108,12 @@ def render_market(market: Market) -> bytes:
     _text(
         draw,
         (28, 22),
-        "FX PLAYROOM  |  SIMULATION MARKET",
+        "虚拟外汇 | 模拟行情",
         font=_font(24, True),
         fill=TEXT,
     )
-    _text(draw, (28, 52), f"TICK {market.tick}", font=_font(15), fill=MUTED)
-    _text(draw, (WIDTH - 160, 52), "FAKE DATA", font=_font(15, True), fill=YELLOW)
+    _text(draw, (28, 52), f"第 {market.tick} 期", font=_font(15), fill=MUTED)
+    _text(draw, (WIDTH - 160, 52), "虚假数据", font=_font(15, True), fill=YELLOW)
 
     for index, item in enumerate(PAIR_DEFS):
         top = header + index * row_height
@@ -118,7 +130,7 @@ def render_market(market: Market) -> bytes:
         _text(
             draw,
             (38, top + 40),
-            item.get("english", item["id"]),
+            item["name"],
             font=_font(13),
             fill=MUTED,
         )
@@ -136,7 +148,7 @@ def render_market(market: Market) -> bytes:
         points = _sparkline_points(series.candles, 420, top + 15, 360, 36)
         if points:
             draw.line(points, fill=color, width=2, joint="curve")
-        _text(draw, (WIDTH - 140, top + 24), "VIEW", font=_font(15, True), fill=MUTED)
+        _text(draw, (WIDTH - 140, top + 24), "查看", font=_font(15, True), fill=MUTED)
     return _png_bytes(image)
 
 
@@ -153,7 +165,7 @@ def render_chart(market: Market, pair_id: str) -> bytes:
     change = series.change_percent()
     color = GREEN if change >= 0 else RED
     _text(draw, (28, 20), pair_id, font=_font(28, True), fill=TEXT)
-    _text(draw, (28, 56), item.get("english", item["id"]), font=_font(16), fill=MUTED)
+    _text(draw, (28, 56), item["name"], font=_font(16), fill=MUTED)
     _text(
         draw,
         (WIDTH - 300, 24),
@@ -202,15 +214,15 @@ def render_chart(market: Market, pair_id: str) -> bytes:
             fill=candle_color,
         )
 
-    _text(draw, (left, bottom + 18), f"LOW {low:.5f}", font=_font(13), fill=MUTED)
+    _text(draw, (left, bottom + 18), f"最低 {low:.5f}", font=_font(13), fill=MUTED)
     _text(
         draw,
         (right - 220, bottom + 18),
-        f"HIGH {high:.5f}  |  CANDLES {len(candles)}",
+        f"最高 {high:.5f}  |  K线 {len(candles)}",
         font=_font(13),
         fill=MUTED,
     )
-    _text(draw, (WIDTH - 180, 440), "SIMULATED", font=_font(14, True), fill=YELLOW)
+    _text(draw, (WIDTH - 180, 440), "模拟行情", font=_font(14, True), fill=YELLOW)
     return _png_bytes(image)
 
 
@@ -221,17 +233,17 @@ def render_account(account: Account, market: Market) -> bytes:
     height = 310 + max(1, len(positions)) * 44
     image = Image.new("RGB", (WIDTH, height), BG)
     draw = ImageDraw.Draw(image)
-    _text(draw, (28, 22), "ACCOUNT", font=_font(26, True), fill=TEXT)
-    _text(draw, (28, 58), account.user_id[-10:], font=_font(16), fill=MUTED)
+    _text(draw, (28, 22), "账户", font=_font(26, True), fill=TEXT)
+    _text(draw, (28, 58), account.name, font=_font(16), fill=MUTED)
 
     equity = account.equity(market)
     floating = account.floating_pnl(market)
     rows = [
-        ("CASH", money(account.cash), TEXT),
-        ("USED MARGIN", money(account.used_margin()), TEXT),
-        ("FLOATING P/L", signed_money(floating), GREEN if floating >= 0 else RED),
-        ("EQUITY", money(equity), GREEN if equity >= 0 else RED),
-        ("DEBT", money(account.debt), YELLOW if account.debt > 0 else TEXT),
+        ("现金", money(account.cash), TEXT),
+        ("占用保证金", money(account.used_margin()), TEXT),
+        ("浮动盈亏", signed_money(floating), GREEN if floating >= 0 else RED),
+        ("净值", money(equity), GREEN if equity >= 0 else RED),
+        ("负债", money(account.debt), YELLOW if account.debt > 0 else TEXT),
     ]
     for index, (label, value, color) in enumerate(rows):
         top = 100 + index * 34
@@ -240,20 +252,18 @@ def render_account(account: Account, market: Market) -> bytes:
         _text(draw, (WIDTH - 260, top + 6), value, font=_font(16, True), fill=color)
 
     header_top = 290
-    _text(draw, (28, header_top), "POSITIONS", font=_font(20, True), fill=TEXT)
+    _text(draw, (28, header_top), "持仓", font=_font(20, True), fill=TEXT)
     if not positions:
-        _text(
-            draw, (28, header_top + 36), "NO OPEN POSITIONS", font=_font(15), fill=MUTED
-        )
+        _text(draw, (28, header_top + 36), "暂无持仓", font=_font(15), fill=MUTED)
         return _png_bytes(image)
 
-    _text(draw, (28, header_top + 32), "ID", font=_font(13), fill=MUTED)
-    _text(draw, (170, header_top + 32), "PAIR", font=_font(13), fill=MUTED)
-    _text(draw, (300, header_top + 32), "SIDE", font=_font(13), fill=MUTED)
-    _text(draw, (390, header_top + 32), "MARGIN", font=_font(13), fill=MUTED)
-    _text(draw, (540, header_top + 32), "ENTRY", font=_font(13), fill=MUTED)
-    _text(draw, (680, header_top + 32), "NOW", font=_font(13), fill=MUTED)
-    _text(draw, (800, header_top + 32), "P/L", font=_font(13), fill=MUTED)
+    _text(draw, (28, header_top + 32), "编号", font=_font(13), fill=MUTED)
+    _text(draw, (170, header_top + 32), "外汇对", font=_font(13), fill=MUTED)
+    _text(draw, (300, header_top + 32), "方向", font=_font(13), fill=MUTED)
+    _text(draw, (390, header_top + 32), "保证金", font=_font(13), fill=MUTED)
+    _text(draw, (540, header_top + 32), "开仓价", font=_font(13), fill=MUTED)
+    _text(draw, (680, header_top + 32), "当前价", font=_font(13), fill=MUTED)
+    _text(draw, (800, header_top + 32), "盈亏", font=_font(13), fill=MUTED)
     for index, position in enumerate(positions):
         top = header_top + 58 + index * 44
         pnl = position.pnl(market)
@@ -264,7 +274,7 @@ def render_account(account: Account, market: Market) -> bytes:
         _text(
             draw,
             (300, top + 9),
-            "LONG" if position.side == 1 else "SHORT",
+            "做多" if position.side == 1 else "做空",
             font=_font(13, True),
             fill=GREEN if position.side == 1 else RED,
         )
@@ -300,9 +310,9 @@ def render_history(account: Account, limit: int = 12) -> bytes:
     height = 150 + max(1, len(history)) * 38
     image = Image.new("RGB", (WIDTH, height), BG)
     draw = ImageDraw.Draw(image)
-    _text(draw, (28, 22), "TRADE HISTORY", font=_font(26, True), fill=TEXT)
+    _text(draw, (28, 22), "交易历史", font=_font(26, True), fill=TEXT)
     if not history:
-        _text(draw, (28, 90), "NO CLOSED TRADES", font=_font(16), fill=MUTED)
+        _text(draw, (28, 90), "暂无成交记录", font=_font(16), fill=MUTED)
         return _png_bytes(image)
     for index, item in enumerate(history):
         top = 84 + index * 38
@@ -327,7 +337,7 @@ def render_history(account: Account, limit: int = 12) -> bytes:
         _text(
             draw,
             (360, top + 6),
-            "LIQUIDATED" if liquidated else "CLOSED",
+            "爆仓" if liquidated else "平仓",
             font=_font(13, True),
             fill=RED if liquidated else MUTED,
         )
