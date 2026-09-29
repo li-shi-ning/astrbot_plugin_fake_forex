@@ -143,7 +143,7 @@ def percent(value: float) -> str:
 def price_text(pair_id: str, value: float) -> str:
     """Format a pair price using its configured precision."""
 
-    digits = PAIR_MAP[pair_id]["digits"]
+    digits = PAIR_MAP.get(pair_id, {}).get("digits", 5)
     return f"{value:.{digits}f}"
 
 
@@ -281,8 +281,7 @@ def tick_market(
     """Advance every pair by one simulated tick."""
 
     rng = rng or random.Random()
-    for index, item in enumerate(PAIR_DEFS):
-        series = market.pairs[item["id"]]
+    for index, (pair_id, series) in enumerate(list(market.pairs.items())):
         open_price = series.price
         drift = math.sin((market.tick + 1) / 8.67 + index * 2) * 0.00036
         shock = (rng.random() - 0.5) * 0.019 if rng.random() < 0.018 else 0.0
