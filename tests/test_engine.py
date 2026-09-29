@@ -8,10 +8,14 @@ PLUGIN_DIR = Path(__file__).resolve().parents[1]
 if str(PLUGIN_DIR) not in sys.path:
     sys.path.insert(0, str(PLUGIN_DIR))
 
+from src import engine as engine_module  # noqa: E402
 from src.engine import (  # noqa: E402
     Account,
     FxError,
+    INSTRUMENT_DEFS,
     Market,
+    PAIR_MAP,
+    accrue_interest,
     advance_market,
     borrow,
     check_liquidations,
@@ -23,6 +27,10 @@ from src.engine import (  # noqa: E402
     repay,
     tick_market,
 )
+
+# Keep the rule tests deterministic; spread has its own dedicated test below.
+for _instrument in INSTRUMENT_DEFS:
+    _instrument["spread"] = 0.0
 
 
 def seeded_market() -> Market:
@@ -91,16 +99,20 @@ def test_loan_interest_and_repay() -> None:
     borrow(account, 10000)
     assert account.debt == 10000
     assert account.cash == 20000
-    assert loan_daily_rate(10000) == 0.0001
+    assert loan_daily_rate(10000) == 0.03
 
-    account.loan_ticks = 0
-    account.debt = round(account.debt * (1 + account.loan_rate), 2)
-    assert account.debt > 10000
+    periods = accrue_interest(account, now=account.loan_last_ts + 1800)
+    assert periods == 1
+    assert account.debt == 10300.0
+
+    periods = accrue_interest(account, now=account.loan_last_ts + 1800)
+    assert periods == 1
+    assert account.debt == 10609.0
 
     paid = repay(account, 5000)
     assert paid == 5000
     assert account.cash == 15000
-    assert account.debt == 5001.0
+    assert account.debt == 5609.0
 
 
 def test_advance_market_liquidates_across_accounts() -> None:
@@ -148,3 +160,33 @@ def test_normalize_pair_accepts_embedded_codes_and_chinese_names() -> None:
     assert normalize_pair("外汇做多 SMSC 500 20") == "SMSC"
     assert normalize_pair("外汇查看 水母水产") == "SMSC"
     assert normalize_pair("外汇做空 芋头股 500 20") == "YTG"
+
+def test_spread_is_applied_to_open_and_close() -> None:
+    market = seeded_market()
+    account = Account("u", "Tester")
+    series = market.pairs["SMSC"]
+    series.price = 100.0
+    old_spread = PAIR_MAP["SMSC"]["spread"]
+    PAIR_MAP["SMSC"]["spread"] = 0.2
+    try:
+        position = open_position(account, market, "SMSC", 1, 100, 10)
+        assert position.entry > series.price
+        assert market.bid("SMSC") < series.price < market.ask("SMSC")
+    finally:
+        PAIR_MAP["SMSC"]["spread"] = old_spread
+
+def test_super_shock_jumps_price_and_sets_regime() -> None:
+    market = seeded_market()
+    series = market.pairs["SMSC"]
+    before = series.price
+    old_chance = engine_module.SUPER_SHOCK_CHANCE
+    engine_module.SUPER_SHOCK_CHANCE = 1.0
+    try:
+        engine_module.tick_market(market, random.Random(1))
+    finally:
+        engine_module.SUPER_SHOCK_CHANCE = old_chance
+
+    move = abs(series.price / before - 1)
+    assert move >= engine_module.SUPER_SHOCK_MIN
+    assert series.regime != 0
+    assert series.regime_ticks > 0

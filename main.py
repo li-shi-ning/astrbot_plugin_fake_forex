@@ -312,7 +312,10 @@ class FakeForexPlugin(Star):
                 CommandOutcome(
                     text=(
                         f"{pair_id} {PAIR_MAP[pair_id]['name']} "
-                        f"{price_text(pair_id, series.price)} {change:+.2f}%"
+                        f"{price_text(pair_id, series.price)} {change:+.2f}%  "
+                        f"买 {price_text(pair_id, self.market.ask(pair_id))} / "
+                        f"卖 {price_text(pair_id, self.market.bid(pair_id))}  "
+                        f"点差 {self.market.spread_pct(pair_id):.2f}%"
                     ),
                     image=render_chart(self.market, pair_id),
                     buttons=self._pair_buttons(account, pair_id),
@@ -403,7 +406,7 @@ class FakeForexPlugin(Star):
                 CommandOutcome(
                     text=(
                         f"已借款 {money(amount)}，当前欠款 {money(debt)}，"
-                        f"日利率 {account.loan_rate * 100:.2f}%"
+                        "每 30 分钟利率 3.00%，复利计息"
                     )
                 ),
             )
@@ -462,7 +465,8 @@ class FakeForexPlugin(Star):
             "外汇借款 10000 / 外汇还款 5000\n"
             "管理员：外汇添加股票 <代码> <名称> <初始价>\n\n"
             "规则：最低保证金 $10，最大杠杆 100x，"
-            "亏损达到保证金 80% 自动爆仓。"
+            "亏损达到保证金 80% 自动爆仓；买卖存在点差；"
+            "行情有低概率超级波动，贷款每 30 分钟按 3% 复利计息。"
         )
         return CommandOutcome(text=text, buttons=self._menu_buttons())
 

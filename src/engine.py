@@ -8,20 +8,32 @@ from dataclasses import dataclass, field
 from typing import Any
 
 INSTRUMENT_DEFS: list[dict[str, Any]] = [
-    {"id": "SMSC", "name": "水母水产", "initial": 12.50, "digits": 2},
-    {"id": "YZCC", "name": "预制菜赌场", "initial": 8.88, "digits": 2},
-    {"id": "HYG", "name": "辉叶股", "initial": 45.60, "digits": 2},
-    {"id": "ZYG", "name": "真叶股", "initial": 52.30, "digits": 2},
-    {"id": "YFNHJ", "name": "茵菲诺黄金", "initial": 188.80, "digits": 2},
-    {"id": "YTG", "name": "芋头股", "initial": 23.45, "digits": 2},
-    {"id": "MYG", "name": "卯月股", "initial": 77.77, "digits": 2},
-    {"id": "ASKC", "name": "爱素矿产", "initial": 31.20, "digits": 2},
-    {"id": "QYJT", "name": "千音集团", "initial": 66.60, "digits": 2},
-    {"id": "NMWY", "name": "糯米文娱", "initial": 18.88, "digits": 2},
-    {"id": "CQSS", "name": "长期素食", "initial": 14.20, "digits": 2},
-    {"id": "BMXY", "name": "白毛兽业", "initial": 9.90, "digits": 2},
-    {"id": "MTDBL", "name": "睦缇斯暴力公司", "initial": 120.00, "digits": 2},
-    {"id": "XYKH", "name": "咲夜航空", "initial": 58.88, "digits": 2},
+    {"id": "SMSC", "name": "水母水产", "initial": 12.50, "digits": 2, "spread": 0.20},
+    {"id": "YZCC", "name": "预制菜赌场", "initial": 8.88, "digits": 2, "spread": 0.20},
+    {"id": "HYG", "name": "辉叶股", "initial": 45.60, "digits": 2, "spread": 0.20},
+    {"id": "ZYG", "name": "真叶股", "initial": 52.30, "digits": 2, "spread": 0.20},
+    {
+        "id": "YFNHJ",
+        "name": "茵菲诺黄金",
+        "initial": 188.80,
+        "digits": 2,
+        "spread": 0.20,
+    },
+    {"id": "YTG", "name": "芋头股", "initial": 23.45, "digits": 2, "spread": 0.20},
+    {"id": "MYG", "name": "卯月股", "initial": 77.77, "digits": 2, "spread": 0.20},
+    {"id": "ASKC", "name": "爱素矿产", "initial": 31.20, "digits": 2, "spread": 0.20},
+    {"id": "QYJT", "name": "千音集团", "initial": 66.60, "digits": 2, "spread": 0.20},
+    {"id": "NMWY", "name": "糯米文娱", "initial": 18.88, "digits": 2, "spread": 0.20},
+    {"id": "CQSS", "name": "长期素食", "initial": 14.20, "digits": 2, "spread": 0.20},
+    {"id": "BMXY", "name": "白毛兽业", "initial": 9.90, "digits": 2, "spread": 0.20},
+    {
+        "id": "MTDBL",
+        "name": "睦缇斯暴力公司",
+        "initial": 120.00,
+        "digits": 2,
+        "spread": 0.20,
+    },
+    {"id": "XYKH", "name": "咲夜航空", "initial": 58.88, "digits": 2, "spread": 0.20},
 ]
 PAIR_DEFS = INSTRUMENT_DEFS
 PAIR_IDS = [item["id"] for item in INSTRUMENT_DEFS]
@@ -39,6 +51,7 @@ def register_instrument(
     name: str,
     initial: float,
     digits: int = 2,
+    spread: float = 0.20,
 ) -> dict[str, Any]:
     """Register or update a custom instrument.
 
@@ -71,6 +84,7 @@ def register_instrument(
                     "name": normalized_name,
                     "initial": float(initial),
                     "digits": digits,
+                    "spread": max(0.0, float(spread)),
                 }
             )
             PAIR_MAP[normalized_code] = item
@@ -80,6 +94,7 @@ def register_instrument(
         "name": normalized_name,
         "initial": float(initial),
         "digits": digits,
+        "spread": max(0.0, float(spread)),
     }
     INSTRUMENT_DEFS.append(definition)
     PAIR_IDS.append(normalized_code)
@@ -95,7 +110,14 @@ MAX_LEVERAGE = 100
 WARNING_RATIO = 0.6
 LIQUIDATION_RATIO = 0.8
 LOAN_MAX = 200000.0
-LOAN_INTEREST_TICKS = 20
+LOAN_INTEREST_RATE = 0.03
+LOAN_INTEREST_SECONDS = 1800
+SUPER_SHOCK_CHANCE = 0.006
+SUPER_SHOCK_MIN = 0.08
+SUPER_SHOCK_MAX = 0.45
+REGIME_TICKS_MIN = 30
+REGIME_TICKS_MAX = 150
+DEFAULT_SPREAD_PCT = 0.20
 HISTORY_LIMIT = 25
 CANDLE_LIMIT = 150
 SEED_CANDLES = 76
@@ -161,15 +183,13 @@ def price_text(pair_id: str, value: float) -> str:
 
 
 def loan_daily_rate(amount: float) -> float:
-    """Return the tiered daily loan rate used by the reference toy."""
+    """Return the fixed compounded loan rate.
 
-    if amount <= 10000:
-        return 0.0001
-    if amount <= 50000:
-        return 0.0002
-    if amount <= 100000:
-        return 0.0003
-    return 0.0004
+    The argument is kept for backward compatibility with older callers.
+    """
+
+    _ = amount
+    return LOAN_INTEREST_RATE
 
 
 def _seed_series(
@@ -211,6 +231,8 @@ class PairSeries:
     id: str
     price: float
     candles: list[dict[str, float]] = field(default_factory=list)
+    regime: float = 0.0
+    regime_ticks: int = 0
 
     def change_percent(self) -> float:
         """Return the latest candle change percentage."""
@@ -223,7 +245,13 @@ class PairSeries:
         return (self.price / previous - 1) * 100
 
     def to_dict(self) -> dict[str, Any]:
-        return {"id": self.id, "price": self.price, "candles": self.candles}
+        return {
+            "id": self.id,
+            "price": self.price,
+            "candles": self.candles,
+            "regime": self.regime,
+            "regime_ticks": self.regime_ticks,
+        }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> PairSeries:
@@ -231,6 +259,8 @@ class PairSeries:
             id=str(data.get("id") or ""),
             price=float(data.get("price") or 0),
             candles=list(data.get("candles") or []),
+            regime=float(data.get("regime") or 0),
+            regime_ticks=int(data.get("regime_ticks") or 0),
         )
 
 
@@ -248,6 +278,23 @@ class Market:
 
     def price(self, pair_id: str) -> float:
         return self.pairs[pair_id].price
+
+    def spread_pct(self, pair_id: str) -> float:
+        """Return the instrument spread percentage."""
+
+        return float(PAIR_MAP.get(pair_id, {}).get("spread", DEFAULT_SPREAD_PCT))
+
+    def bid(self, pair_id: str) -> float:
+        """Return the price at which the player can sell."""
+
+        half_spread = self.spread_pct(pair_id) / 200
+        return self.price(pair_id) * (1 - half_spread)
+
+    def ask(self, pair_id: str) -> float:
+        """Return the price at which the player can buy."""
+
+        half_spread = self.spread_pct(pair_id) / 200
+        return self.price(pair_id) * (1 + half_spread)
 
     def add_instrument(
         self, item: dict[str, Any], rng: random.Random | None = None
@@ -294,15 +341,30 @@ def tick_market(
     """Advance every pair by one simulated tick."""
 
     rng = rng or random.Random()
-    for index, (pair_id, series) in enumerate(list(market.pairs.items())):
+    for index, (_pair_id, series) in enumerate(list(market.pairs.items())):
         open_price = series.price
-        drift = math.sin((market.tick + 1) / 8.67 + index * 2) * 0.00036
-        shock = (rng.random() - 0.5) * 0.019 if rng.random() < 0.018 else 0.0
-        close = max(
-            open_price * 0.5,
-            open_price * (1 + drift + (rng.random() - 0.5) * 0.0042 + shock),
-        )
-        wick = open_price * (rng.random() * 0.0007 + 0.00015)
+        regime = series.regime if series.regime_ticks > 0 else 0.0
+
+        if rng.random() < SUPER_SHOCK_CHANCE:
+            direction = 1 if rng.random() < 0.5 else -1
+            magnitude = rng.uniform(SUPER_SHOCK_MIN, SUPER_SHOCK_MAX)
+            close = max(open_price * 0.05, open_price * (1 + direction * magnitude))
+            series.regime = direction * rng.uniform(0.0005, 0.004)
+            series.regime_ticks = rng.randint(REGIME_TICKS_MIN, REGIME_TICKS_MAX)
+        else:
+            drift = math.sin((market.tick + 1) / 8.67 + index * 2) * 0.00036
+            shock = (rng.random() - 0.5) * 0.019 if rng.random() < 0.018 else 0.0
+            close = max(
+                open_price * 0.5,
+                open_price
+                * (1 + drift + regime + (rng.random() - 0.5) * 0.0042 + shock),
+            )
+            if series.regime_ticks > 0:
+                series.regime_ticks -= 1
+            else:
+                series.regime = 0.0
+
+        wick = open_price * (rng.random() * 0.0015 + 0.0002)
         series.candles.append(
             {
                 "open": open_price,
@@ -337,10 +399,10 @@ class Position:
     def pnl(self, market: Market) -> float:
         """Return the floating profit/loss for this position."""
 
-        current = market.price(self.pair)
         if self.entry <= 0:
             return 0.0
-        return self.notional * self.side * (current / self.entry - 1)
+        exit_price = market.bid(self.pair) if self.side == 1 else market.ask(self.pair)
+        return self.notional * self.side * (exit_price / self.entry - 1)
 
     def risk_ratio(self, market: Market) -> float:
         """Return how much of the margin has been lost."""
@@ -384,6 +446,7 @@ class Account:
     loan_principal: float = 0.0
     loan_rate: float = 0.0
     loan_ticks: int = 0
+    loan_last_ts: float = 0.0
     margin_default: float = DEFAULT_MARGIN
     leverage_default: int = DEFAULT_LEVERAGE
     positions: list[Position] = field(default_factory=list)
@@ -408,6 +471,7 @@ class Account:
             "loan_principal": self.loan_principal,
             "loan_rate": self.loan_rate,
             "loan_ticks": self.loan_ticks,
+            "loan_last_ts": self.loan_last_ts,
             "margin_default": self.margin_default,
             "leverage_default": self.leverage_default,
             "positions": [position.to_dict() for position in self.positions],
@@ -425,8 +489,9 @@ class Account:
             ),
             debt=float(data.get("debt") or 0),
             loan_principal=float(data.get("loan_principal") or 0),
-            loan_rate=float(data.get("loan_rate") or 0),
+            loan_rate=float(data.get("loan_rate") or 0) or LOAN_INTEREST_RATE,
             loan_ticks=int(data.get("loan_ticks") or 0),
+            loan_last_ts=float(data.get("loan_last_ts") or 0),
             margin_default=max(
                 MIN_MARGIN, float(data.get("margin_default") or DEFAULT_MARGIN)
             ),
@@ -462,7 +527,7 @@ def open_position(
         raise FxError(f"可用余额不足，当前可用 {money(account.cash)}。")
     if not 1 <= leverage_value <= MAX_LEVERAGE:
         raise FxError(f"杠杆范围是 1-{MAX_LEVERAGE} 倍。")
-    entry = market.price(normalized)
+    entry = market.ask(normalized) if side == 1 else market.bid(normalized)
     if not math.isfinite(entry) or entry <= 0:
         raise FxError("行情尚未准备好。")
 
@@ -538,12 +603,32 @@ def check_liquidations(account: Account, market: Market) -> list[str]:
     return events
 
 
-def accrue_interest(account: Account) -> None:
-    """Accrue one daily loan interest payment."""
+def accrue_interest(
+    account: Account,
+    now: float | None = None,
+    interval_seconds: int = LOAN_INTEREST_SECONDS,
+) -> int:
+    """Settle compounded loan interest for each elapsed half-hour period.
+
+    Returns:
+        Number of interest periods settled.
+    """
 
     if account.debt <= 0:
-        return
-    account.debt = round(account.debt * (1 + account.loan_rate), 2)
+        return 0
+    now = now if now is not None else time.time()
+    if account.loan_last_ts <= 0:
+        account.loan_last_ts = now
+        account.loan_rate = LOAN_INTEREST_RATE
+        return 0
+    periods = int((now - account.loan_last_ts) // max(1, interval_seconds))
+    if periods <= 0:
+        return 0
+    rate = account.loan_rate or LOAN_INTEREST_RATE
+    for _ in range(periods):
+        account.debt = round(account.debt * (1 + rate), 2)
+    account.loan_last_ts += periods * interval_seconds
+    return periods
 
 
 def borrow(account: Account, amount: float) -> float:
@@ -557,8 +642,9 @@ def borrow(account: Account, amount: float) -> float:
         raise FxError("请先还清当前贷款，才能再次借款。")
     account.debt = float(amount)
     account.loan_principal = float(amount)
-    account.loan_rate = loan_daily_rate(amount)
+    account.loan_rate = LOAN_INTEREST_RATE
     account.loan_ticks = 0
+    account.loan_last_ts = time.time()
     account.cash += float(amount)
     return account.debt
 
@@ -580,6 +666,7 @@ def repay(account: Account, amount: float) -> float:
         account.loan_principal = 0.0
         account.loan_rate = 0.0
         account.loan_ticks = 0
+        account.loan_last_ts = 0.0
     return paid
 
 
@@ -599,16 +686,11 @@ def advance_market(
     now = now if now is not None else time.time()
     elapsed = max(0.0, now - market.last_tick_ts)
     steps = min(int(elapsed // max(1, tick_seconds)), max(0, max_ticks))
-    if steps <= 0:
-        return 0
     rng = random.Random()
     for _ in range(steps):
         tick_market(market, rng, now)
         for account in accounts:
-            if account.debt > 0:
-                account.loan_ticks += 1
-                if account.loan_ticks >= LOAN_INTEREST_TICKS:
-                    account.loan_ticks = 0
-                    accrue_interest(account)
             check_liquidations(account, market)
+    for account in accounts:
+        accrue_interest(account, now)
     return steps
