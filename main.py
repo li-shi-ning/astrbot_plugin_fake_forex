@@ -315,7 +315,9 @@ class FakeForexPlugin(Star):
                         f"{price_text(pair_id, series.price)} {change:+.2f}%  "
                         f"买 {price_text(pair_id, self.market.ask(pair_id))} / "
                         f"卖 {price_text(pair_id, self.market.bid(pair_id))}  "
-                        f"点差 {self.market.spread_pct(pair_id):.2f}%"
+                        f"点差 {self.market.spread_pct(pair_id):.2f}%  "
+                        f"最大杠杆 {self.market.max_leverage(pair_id)}x"
+                        + self._news_suffix(pair_id)
                     ),
                     image=render_chart(self.market, pair_id),
                     buttons=self._pair_buttons(account, pair_id),
@@ -464,18 +466,31 @@ class FakeForexPlugin(Star):
             "外汇设置 保证金 500 / 外汇设置 杠杆 20\n"
             "外汇借款 10000 / 外汇还款 5000\n"
             "管理员：外汇添加股票 <代码> <名称> <初始价>\n\n"
-            "规则：最低保证金 $10，最大杠杆 100x，"
-            "亏损达到保证金 80% 自动爆仓；买卖存在点差；"
-            "行情有低概率超级波动，贷款每 30 分钟按 3% 复利计息。"
+            "规则：最低保证金 $10，最大杠杆 100x；"
+            "开/平仓各收 0.05% 手续费，大单有滑点；"
+            "每 30 分钟收持仓费，做空额外收借券费；"
+            "波动率越高最大杠杆越低；突发新闻会造成跳空；"
+            "爆仓额外收 1% 名义仓位罚金；"
+            "贷款每 30 分钟按 3% 复利计息。"
         )
         return CommandOutcome(text=text, buttons=self._menu_buttons())
 
     def _market_outcome(self, account: Account) -> CommandOutcome:
+        text = "行情"
+        news = self.market.latest_news(limit=3)
+        if news:
+            text += "\n" + "\n".join(f"· {item['text']}" for item in news)
         return CommandOutcome(
-            text="行情",
+            text=text,
             image=render_market(self.market),
             buttons=self._market_buttons(),
         )
+
+    def _news_suffix(self, pair_id: str) -> str:
+        news = self.market.latest_news(pair_id, limit=1)
+        if not news:
+            return ""
+        return f"\n最新：{news[0]['text']}"
 
     def _settings_outcome(self, account: Account, text: str) -> CommandOutcome:
         margin_match = re.search(r"保证金\s*[:：]?\s*(\d+(?:\.\d+)?)", text)

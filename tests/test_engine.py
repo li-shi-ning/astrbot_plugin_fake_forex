@@ -25,16 +25,35 @@ from src.engine import (  # noqa: E402
     open_position,
     register_instrument,
     repay,
+    settle_holding_fees,
     tick_market,
 )
 
-# Keep the rule tests deterministic; spread has its own dedicated test below.
+# Keep the rule tests deterministic; each new mechanic has a dedicated test.
 for _instrument in INSTRUMENT_DEFS:
     _instrument["spread"] = 0.0
+for _attr in (
+    "TRADE_FEE_RATE",
+    "SLIPPAGE_FACTOR",
+    "HOLD_FEE_RATE",
+    "SHORT_BORROW_FEE_RATE",
+    "LIQUIDATION_PENALTY_RATE",
+    "NEWS_CHANCE",
+    "SUPER_SHOCK_CHANCE",
+):
+    setattr(engine_module, _attr, 0.0)
 
 
 def seeded_market() -> Market:
     return Market.new(random.Random(7))
+
+
+def set_flat_price(series, value: float) -> None:
+    series.price = value
+    series.candles = [
+        {"open": value, "high": value, "low": value, "close": value}
+        for _ in range(40)
+    ]
 
 
 def test_market_has_all_pairs_and_ticks() -> None:
@@ -52,8 +71,7 @@ def test_long_position_profit_and_close() -> None:
     market = seeded_market()
     account = Account("u", "Tester")
     series = market.pairs["SMSC"]
-    series.price = 1.0
-    series.candles[-1]["close"] = 1.0
+    set_flat_price(series, 1.0)
 
     position = open_position(account, market, "SMSC", 1, 100, 10)
     assert account.cash == 9900
@@ -69,7 +87,7 @@ def test_short_position_profit_and_close() -> None:
     market = seeded_market()
     account = Account("u", "Tester")
     series = market.pairs["YZCC"]
-    series.price = 1.0
+    set_flat_price(series, 1.0)
     position = open_position(account, market, "YZCC", -1, 100, 10)
     series.price = 0.9
     assert round(position.pnl(market), 2) == 100
@@ -81,7 +99,7 @@ def test_liquidation_at_eighty_percent() -> None:
     market = seeded_market()
     account = Account("u", "Tester")
     series = market.pairs["SMSC"]
-    series.price = 1.0
+    set_flat_price(series, 1.0)
     open_position(account, market, "SMSC", 1, 100, 10)
     series.price = 0.92
 
@@ -119,7 +137,7 @@ def test_advance_market_liquidates_across_accounts() -> None:
     market = seeded_market()
     account = Account("u", "Tester")
     series = market.pairs["SMSC"]
-    series.price = 1.0
+    set_flat_price(series, 1.0)
     position = open_position(account, market, "SMSC", 1, 100, 10)
     series.price = 0.5
 
@@ -165,7 +183,7 @@ def test_spread_is_applied_to_open_and_close() -> None:
     market = seeded_market()
     account = Account("u", "Tester")
     series = market.pairs["SMSC"]
-    series.price = 100.0
+    set_flat_price(series, 100.0)
     old_spread = PAIR_MAP["SMSC"]["spread"]
     PAIR_MAP["SMSC"]["spread"] = 0.2
     try:
@@ -190,3 +208,85 @@ def test_super_shock_jumps_price_and_sets_regime() -> None:
     assert move >= engine_module.SUPER_SHOCK_MIN
     assert series.regime != 0
     assert series.regime_ticks > 0
+
+def test_trade_fee_and_liquidation_penalty() -> None:
+    market = seeded_market()
+    account = Account("u", "Tester")
+    series = market.pairs["SMSC"]
+    set_flat_price(series, 1.0)
+    old_fee = engine_module.TRADE_FEE_RATE
+    old_penalty = engine_module.LIQUIDATION_PENALTY_RATE
+    engine_module.TRADE_FEE_RATE = 0.001
+    engine_module.LIQUIDATION_PENALTY_RATE = 0.01
+    try:
+        position = open_position(account, market, "SMSC", 1, 100, 10)
+        assert position.open_fee > 0
+        assert account.cash < 9900
+
+        series.price = 0.8
+        record = close_position(account, market, position.id, liquidated=True)
+        assert record["penalty"] > 0
+        assert record["fee"] > 0
+        assert record["pnl"] < record["gross_pnl"]
+    finally:
+        engine_module.TRADE_FEE_RATE = old_fee
+        engine_module.LIQUIDATION_PENALTY_RATE = old_penalty
+
+
+def test_slippage_worsens_large_order_entry() -> None:
+    market = seeded_market()
+    account = Account("u", "Tester")
+    series = market.pairs["SMSC"]
+    set_flat_price(series, 100.0)
+    old_factor = engine_module.SLIPPAGE_FACTOR
+    engine_module.SLIPPAGE_FACTOR = 0.1
+    try:
+        position = open_position(account, market, "SMSC", 1, 1000, 20)
+        assert position.slippage > 0
+        assert position.entry > market.ask("SMSC")
+    finally:
+        engine_module.SLIPPAGE_FACTOR = old_factor
+
+
+def test_holding_and_short_borrow_fees() -> None:
+    market = seeded_market()
+    account = Account("u", "Tester")
+    series = market.pairs["SMSC"]
+    set_flat_price(series, 100.0)
+    old_hold = engine_module.HOLD_FEE_RATE
+    old_borrow = engine_module.SHORT_BORROW_FEE_RATE
+    engine_module.HOLD_FEE_RATE = 0.001
+    engine_module.SHORT_BORROW_FEE_RATE = 0.002
+    try:
+        position = open_position(account, market, "SMSC", -1, 100, 10)
+        cash_before = account.cash
+        fee = settle_holding_fees(
+            account, now=position.holding_fee_ts + 1800
+        )
+        assert fee > 0
+        assert account.cash < cash_before
+    finally:
+        engine_module.HOLD_FEE_RATE = old_hold
+        engine_module.SHORT_BORROW_FEE_RATE = old_borrow
+
+
+def test_news_event_can_fire() -> None:
+    market = seeded_market()
+    old_chance = engine_module.NEWS_CHANCE
+    engine_module.NEWS_CHANCE = 1.0
+    try:
+        tick_market(market, random.Random(1))
+    finally:
+        engine_module.NEWS_CHANCE = old_chance
+    assert market.news
+    assert "突发消息" in market.news[0]["text"]
+
+
+def test_high_volatility_reduces_max_leverage() -> None:
+    market = seeded_market()
+    series = market.pairs["SMSC"]
+    series.candles = [
+        {"open": value, "high": value, "low": value, "close": value}
+        for value in ([50.0, 100.0] * 20)
+    ]
+    assert market.max_leverage("SMSC") < 100

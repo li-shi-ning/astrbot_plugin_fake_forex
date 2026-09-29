@@ -118,6 +118,15 @@ SUPER_SHOCK_MAX = 0.45
 REGIME_TICKS_MIN = 30
 REGIME_TICKS_MAX = 150
 DEFAULT_SPREAD_PCT = 0.20
+TRADE_FEE_RATE = 0.0005
+SLIPPAGE_FACTOR = 0.05
+MAX_SLIPPAGE_PCT = 1.5
+HOLD_FEE_RATE = 0.0003
+SHORT_BORROW_FEE_RATE = 0.0008
+LIQUIDATION_PENALTY_RATE = 0.01
+NEWS_CHANCE = 0.0015
+NEWS_MIN = 0.05
+NEWS_MAX = 0.25
 HISTORY_LIMIT = 25
 CANDLE_LIMIT = 150
 SEED_CANDLES = 76
@@ -269,6 +278,7 @@ class Market:
     pairs: dict[str, PairSeries] = field(default_factory=dict)
     tick: int = 0
     last_tick_ts: float = 0.0
+    news: list[dict[str, Any]] = field(default_factory=list)
 
     @classmethod
     def new(cls, rng: random.Random | None = None) -> Market:
@@ -296,6 +306,41 @@ class Market:
         half_spread = self.spread_pct(pair_id) / 200
         return self.price(pair_id) * (1 + half_spread)
 
+    def recent_volatility_pct(self, pair_id: str, window: int = 20) -> float:
+        """Return average absolute candle return over the recent window."""
+
+        series = self.pairs.get(pair_id)
+        if series is None:
+            return 0.0
+        closes = [float(candle["close"]) for candle in series.candles[-window - 1 :]]
+        if len(closes) < 2:
+            return 0.0
+        returns = [
+            abs(closes[index] / closes[index - 1] - 1)
+            for index in range(1, len(closes))
+            if closes[index - 1] > 0
+        ]
+        if not returns:
+            return 0.0
+        return sum(returns) / len(returns) * 100
+
+    def max_leverage(self, pair_id: str) -> int:
+        """Return the volatility-adjusted maximum leverage."""
+
+        volatility = self.recent_volatility_pct(pair_id)
+        required_margin_pct = max(1.0, min(50.0, volatility * 2.5))
+        return max(1, min(MAX_LEVERAGE, int(100 / required_margin_pct)))
+
+    def latest_news(
+        self, pair_id: str | None = None, limit: int = 3
+    ) -> list[dict[str, Any]]:
+        """Return recent news, optionally filtered to one instrument."""
+
+        items = self.news
+        if pair_id is not None:
+            items = [item for item in items if item.get("pair") == pair_id]
+        return list(items[:limit])
+
     def add_instrument(
         self, item: dict[str, Any], rng: random.Random | None = None
     ) -> PairSeries:
@@ -313,6 +358,7 @@ class Market:
         return {
             "tick": self.tick,
             "last_tick_ts": self.last_tick_ts,
+            "news": self.news,
             "pairs": {key: value.to_dict() for key, value in self.pairs.items()},
         }
 
@@ -326,6 +372,7 @@ class Market:
             pairs=pairs,
             tick=int(data.get("tick") or 0),
             last_tick_ts=float(data.get("last_tick_ts") or time.time()),
+            news=list(data.get("news") or []),
         )
         for item in INSTRUMENT_DEFS:
             if item["id"] not in market.pairs:
@@ -364,6 +411,27 @@ def tick_market(
             else:
                 series.regime = 0.0
 
+        if rng.random() < NEWS_CHANCE:
+            news_direction = 1 if rng.random() < 0.5 else -1
+            news_move = rng.uniform(NEWS_MIN, NEWS_MAX)
+            close = max(close * 0.1, close * (1 + news_direction * news_move))
+            series.regime = news_direction * rng.uniform(0.0002, 0.002)
+            series.regime_ticks = max(series.regime_ticks, rng.randint(20, 80))
+            name = PAIR_MAP.get(_pair_id, {}).get("name", _pair_id)
+            market.news.insert(
+                0,
+                {
+                    "tick": market.tick,
+                    "pair": _pair_id,
+                    "text": (
+                        f"{name} 突发消息，价格"
+                        f"{'暴涨' if news_direction > 0 else '暴跌'} "
+                        f"{news_move * 100:.1f}%"
+                    ),
+                },
+            )
+            del market.news[20:]
+
         wick = open_price * (rng.random() * 0.0015 + 0.0002)
         series.candles.append(
             {
@@ -390,6 +458,9 @@ class Position:
     leverage: int
     notional: float
     opened_ts: float
+    open_fee: float = 0.0
+    slippage: float = 0.0
+    holding_fee_ts: float = 0.0
     warned: bool = False
 
     @property
@@ -402,6 +473,11 @@ class Position:
         if self.entry <= 0:
             return 0.0
         exit_price = market.bid(self.pair) if self.side == 1 else market.ask(self.pair)
+        exit_price = (
+            exit_price * (1 - self.slippage / 100)
+            if self.side == 1
+            else exit_price * (1 + self.slippage / 100)
+        )
         return self.notional * self.side * (exit_price / self.entry - 1)
 
     def risk_ratio(self, market: Market) -> float:
@@ -419,6 +495,9 @@ class Position:
             "leverage": self.leverage,
             "notional": self.notional,
             "opened_ts": self.opened_ts,
+            "open_fee": self.open_fee,
+            "slippage": self.slippage,
+            "holding_fee_ts": self.holding_fee_ts,
             "warned": self.warned,
         }
 
@@ -433,6 +512,11 @@ class Position:
             leverage=int(data.get("leverage") or DEFAULT_LEVERAGE),
             notional=float(data.get("notional") or 0),
             opened_ts=float(data.get("opened_ts") or time.time()),
+            open_fee=float(data.get("open_fee") or 0),
+            slippage=float(data.get("slippage") or 0),
+            holding_fee_ts=float(
+                data.get("holding_fee_ts") or data.get("opened_ts") or time.time()
+            ),
             warned=bool(data.get("warned")),
         )
 
@@ -523,26 +607,43 @@ def open_position(
     leverage_value = int(leverage if leverage is not None else account.leverage_default)
     if margin_value < MIN_MARGIN:
         raise FxError(f"保证金至少为 {money(MIN_MARGIN)}。")
-    if margin_value > account.cash + 0.001:
-        raise FxError(f"可用余额不足，当前可用 {money(account.cash)}。")
     if not 1 <= leverage_value <= MAX_LEVERAGE:
         raise FxError(f"杠杆范围是 1-{MAX_LEVERAGE} 倍。")
+    max_leverage = market.max_leverage(normalized)
+    if leverage_value > max_leverage:
+        raise FxError(f"当前波动率下该股票最大杠杆为 {max_leverage} 倍。")
+
+    notional = margin_value * leverage_value
+    equity_before = max(1.0, account.equity(market))
+    slippage = min(MAX_SLIPPAGE_PCT, notional / equity_before * SLIPPAGE_FACTOR)
+    open_fee = notional * TRADE_FEE_RATE
+    if margin_value + open_fee > account.cash + 0.001:
+        raise FxError(
+            f"可用余额不足，需要保证金 {money(margin_value)} "
+            f"和手续费 {money(open_fee)}，当前可用 {money(account.cash)}。"
+        )
+
     entry = market.ask(normalized) if side == 1 else market.bid(normalized)
+    entry = entry * (1 + slippage / 100) if side == 1 else entry * (1 - slippage / 100)
     if not math.isfinite(entry) or entry <= 0:
         raise FxError("行情尚未准备好。")
 
-    account.cash = max(0.0, account.cash - margin_value)
+    account.cash -= margin_value + open_fee
     account.margin_default = margin_value
     account.leverage_default = leverage_value
+    now = time.time()
     position = Position(
-        id=f"p{int(time.time() * 1000) % 10_000_000:07d}",
+        id=f"p{int(now * 1000) % 10_000_000:07d}",
         pair=normalized,
         side=side,
         entry=entry,
         margin=margin_value,
         leverage=leverage_value,
-        notional=margin_value * leverage_value,
-        opened_ts=time.time(),
+        notional=notional,
+        opened_ts=now,
+        open_fee=open_fee,
+        slippage=slippage,
+        holding_fee_ts=now,
     )
     account.positions.insert(0, position)
     return position
@@ -564,12 +665,17 @@ def close_position(
         raise FxError("找不到这个持仓编号。")
     raw_pnl = target.pnl(market)
     pnl = max(-target.margin, raw_pnl)
-    account.cash += max(0.0, target.margin + pnl)
+    close_fee = target.notional * TRADE_FEE_RATE
+    penalty = target.notional * LIQUIDATION_PENALTY_RATE if liquidated else 0.0
+    account.cash += max(0.0, target.margin + pnl - close_fee) - penalty
     account.positions.remove(target)
     record = {
         "pair": target.pair,
         "side": target.side_label,
-        "pnl": pnl,
+        "pnl": pnl - close_fee - penalty,
+        "gross_pnl": pnl,
+        "fee": target.open_fee + close_fee,
+        "penalty": penalty,
         "liquidated": liquidated,
         "time": time.time(),
     }
@@ -670,6 +776,35 @@ def repay(account: Account, amount: float) -> float:
     return paid
 
 
+def settle_holding_fees(
+    account: Account,
+    now: float | None = None,
+    interval_seconds: int = LOAN_INTEREST_SECONDS,
+) -> float:
+    """Charge periodic holding fees and short borrow fees.
+
+    Returns:
+        Total fee charged in this settlement.
+    """
+
+    now = now if now is not None else time.time()
+    total = 0.0
+    for position in account.positions:
+        if position.holding_fee_ts <= 0:
+            position.holding_fee_ts = position.opened_ts or now
+        periods = int((now - position.holding_fee_ts) // max(1, interval_seconds))
+        if periods <= 0:
+            continue
+        rate = HOLD_FEE_RATE
+        if position.side == -1:
+            rate += SHORT_BORROW_FEE_RATE
+        fee = position.notional * rate * periods
+        account.cash -= fee
+        position.holding_fee_ts += periods * interval_seconds
+        total += fee
+    return total
+
+
 def advance_market(
     market: Market,
     accounts: list[Account],
@@ -693,4 +828,5 @@ def advance_market(
             check_liquidations(account, market)
     for account in accounts:
         accrue_interest(account, now)
+        settle_holding_fees(account, now)
     return steps
