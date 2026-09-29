@@ -92,11 +92,13 @@ def build_keyboard(buttons: list[ButtonSpec]) -> Any:
 
     if not buttons or qinline is None:
         return None
+    limited = buttons[:25]
+    per_row = 5 if len(limited) > 15 else 3
     rows = [
-        {"buttons": [_build_button(spec) for spec in buttons[index : index + 3]]}
-        for index in range(0, min(len(buttons), 15), 3)
+        {"buttons": [_build_button(spec) for spec in limited[index : index + per_row]]}
+        for index in range(0, len(limited), per_row)
     ]
-    return {"content": {"rows": rows}}
+    return {"content": {"rows": rows[:5]}}
 
 
 def build_payload(text: str, buttons: list[ButtonSpec] | None = None) -> dict[str, Any]:

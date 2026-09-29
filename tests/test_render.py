@@ -15,11 +15,11 @@ from src.render import render_account, render_chart, render_history, render_mark
 def test_renderers_return_png_bytes() -> None:
     market = Market.new(random.Random(2))
     account = Account("u", "Tester")
-    open_position(account, market, "EUR/USD", 1, 500, 20)
+    open_position(account, market, "SMSC", 1, 500, 20)
 
     for payload in (
         render_market(market),
-        render_chart(market, "EUR/USD"),
+        render_chart(market, "SMSC"),
         render_account(account, market),
         render_history(account),
     ):

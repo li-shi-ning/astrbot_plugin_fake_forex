@@ -230,7 +230,7 @@ def render_account(account: Account, market: Market) -> bytes:
     """Render an account summary and open positions."""
 
     positions = account.positions
-    height = 310 + max(1, len(positions)) * 44
+    height = 420 + max(1, len(positions)) * 44
     image = Image.new("RGB", (WIDTH, height), BG)
     draw = ImageDraw.Draw(image)
     _text(draw, (28, 22), "账户", font=_font(26, True), fill=TEXT)
@@ -258,7 +258,7 @@ def render_account(account: Account, market: Market) -> bytes:
         return _png_bytes(image)
 
     _text(draw, (28, header_top + 32), "编号", font=_font(13), fill=MUTED)
-    _text(draw, (170, header_top + 32), "外汇对", font=_font(13), fill=MUTED)
+    _text(draw, (170, header_top + 32), "股票", font=_font(13), fill=MUTED)
     _text(draw, (300, header_top + 32), "方向", font=_font(13), fill=MUTED)
     _text(draw, (390, header_top + 32), "保证金", font=_font(13), fill=MUTED)
     _text(draw, (540, header_top + 32), "开仓价", font=_font(13), fill=MUTED)

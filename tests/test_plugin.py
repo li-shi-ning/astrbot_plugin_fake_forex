@@ -48,11 +48,12 @@ class FakeResult:
 
 
 class FakeEvent:
-    def __init__(self, member_openid: str = "member") -> None:
+    def __init__(self, member_openid: str = "member", admin: bool = False) -> None:
         self.bot = FakeBot()
         self.raw = FakeRawMessage("group-id", member_openid)
         self.message_obj = SimpleNamespace(raw_message=self.raw, message_id="message-id")
         self.message_str = ""
+        self.admin = admin
 
     def get_platform_name(self) -> str:
         return "qq_official"
@@ -73,7 +74,7 @@ class FakeEvent:
         return self.message_str
 
     def is_admin(self) -> bool:
-        return False
+        return self.admin
 
     def plain_result(self, text: str) -> str:
         return text
@@ -105,3 +106,15 @@ def test_menu_and_market_commands_send_group_payload(tmp_path: Path) -> None:
 
         run(collect(plugin.market_command(event)))
         assert len(event.bot.api.group_messages) >= 2
+
+def test_admin_can_add_custom_instrument(tmp_path: Path) -> None:
+    with patch.object(plugin_main.StarTools, "get_data_dir", return_value=tmp_path):
+        plugin = plugin_main.FakeForexPlugin(context=SimpleNamespace(), config={"tick_seconds": 3600})
+        run(plugin.initialize())
+        event = FakeEvent(admin=True)
+        event.message_str = "外汇添加股票 NEWX 新股票 33.3"
+
+        run(collect(plugin.add_instrument_command(event)))
+
+        assert event.bot.api.group_messages
+        assert "NEWX" in str(event.bot.api.group_messages[-1]["markdown"])

@@ -21,10 +21,12 @@ try:
         advance_market,
         borrow,
         close_position,
+        instrument_defs,
         money,
         normalize_pair,
         open_position,
         price_text,
+        register_instrument,
         repay,
         signed_money,
     )
@@ -51,10 +53,12 @@ except ImportError:  # pragma: no cover - direct local import fallback
         advance_market,
         borrow,
         close_position,
+        instrument_defs,
         money,
         normalize_pair,
         open_position,
         price_text,
+        register_instrument,
         repay,
         signed_money,
     )
@@ -113,6 +117,22 @@ class FakeForexPlugin(Star):
         """Load the global market and per-group accounts."""
 
         state = await self.store.load()
+        custom_instruments = (
+            state.get("instruments") if isinstance(state, dict) else None
+        )
+        if isinstance(custom_instruments, list):
+            for item in custom_instruments:
+                if not isinstance(item, dict):
+                    continue
+                try:
+                    register_instrument(
+                        str(item.get("id") or ""),
+                        str(item.get("name") or ""),
+                        float(item.get("initial") or 0),
+                        int(item.get("digits") or 2),
+                    )
+                except (FxError, TypeError, ValueError) as exc:
+                    logger.warning("[FakeForex] invalid saved instrument: %s", exc)
         market_data = state.get("market") if isinstance(state, dict) else None
         if isinstance(market_data, dict):
             self.market = Market.from_dict(market_data)
@@ -217,6 +237,15 @@ class FakeForexPlugin(Star):
             yield result
         event.stop_event()
 
+    @filter.command(
+        "外汇添加股票",
+        alias={"添加股票", "股票添加", "外汇新增股票", "股票新增"},
+    )
+    async def add_instrument_command(self, event: AstrMessageEvent):
+        async for result in self._handle_command(event, "add_instrument"):
+            yield result
+        event.stop_event()
+
     # ------------------------------------------------------------------
     # Dispatch
     # ------------------------------------------------------------------
@@ -275,7 +304,7 @@ class FakeForexPlugin(Star):
         if command == "quote":
             pair_id = self._pair_arg(text)
             if pair_id is None:
-                raise FxError("请带上外汇对，例如：外汇查看 EUR/USD。")
+                raise FxError("请带上股票代码或名称，例如：外汇查看 水母水产。")
             series = self.market.pairs[pair_id]
             change = series.change_percent()
             return self._with_notes(
@@ -292,7 +321,7 @@ class FakeForexPlugin(Star):
         if command in {"long", "short"}:
             pair_id = self._pair_arg(text)
             if pair_id is None:
-                raise FxError("请带上外汇对，例如：外汇做多 EUR/USD 500 20。")
+                raise FxError("请带上股票代码或名称，例如：外汇做多 水母水产 500 20。")
             numbers = self._numbers(text)
             margin = numbers[0] if numbers else None
             leverage = int(numbers[1]) if len(numbers) > 1 else None
@@ -398,6 +427,22 @@ class FakeForexPlugin(Star):
                     buttons=self._account_buttons(),
                 ),
             )
+        if command == "add_instrument":
+            if not self._is_admin(event):
+                raise FxError("只有管理员可以添加股票。")
+            code, name, price, digits = self._parse_instrument_args(text)
+            definition = register_instrument(code, name, price, digits)
+            self.market.add_instrument(definition)
+            return self._with_notes(
+                notes,
+                CommandOutcome(
+                    text=(
+                        f"已添加 {definition['id']} {definition['name']} "
+                        f"初始价 {price_text(definition['id'], float(definition['initial']))}"
+                    ),
+                    buttons=self._market_buttons(),
+                ),
+            )
         raise FxError("未知指令。")
 
     # ------------------------------------------------------------------
@@ -407,14 +452,15 @@ class FakeForexPlugin(Star):
         text = (
             "虚拟外汇\n"
             "完全虚假行情，不接真实交易数据。\n\n"
-            "外汇行情：查看全部外汇对\n"
-            "外汇查看 EUR/USD：查看单个行情图\n"
-            "外汇做多 EUR/USD 500 20\n"
-            "外汇做空 EUR/USD 500 20\n"
+            "外汇行情：查看全部股票\n"
+            "外汇查看 水母水产：查看单个 K 线图\n"
+            "外汇做多 水母水产 500 20\n"
+            "外汇做空 水母水产 500 20\n"
             "外汇持仓 / 外汇平仓 编号\n"
             "外汇账户 / 外汇历史\n"
             "外汇设置 保证金 500 / 外汇设置 杠杆 20\n"
-            "外汇借款 10000 / 外汇还款 5000\n\n"
+            "外汇借款 10000 / 外汇还款 5000\n"
+            "管理员：外汇添加股票 <代码> <名称> <初始价>\n\n"
             "规则：最低保证金 $10，最大杠杆 100x，"
             "亏损达到保证金 80% 自动爆仓。"
         )
@@ -520,7 +566,7 @@ class FakeForexPlugin(Star):
 
     def _positions_buttons(self, account: Account) -> list[ButtonSpec]:
         buttons: list[ButtonSpec] = []
-        for position in account.positions[:8]:
+        for position in account.positions[:20]:
             buttons.append(
                 ButtonSpec(
                     f"fx_close_{position.id}",
@@ -587,6 +633,7 @@ class FakeForexPlugin(Star):
         await self.store.save(
             {
                 "market": self.market.to_dict(),
+                "instruments": instrument_defs(),
                 "groups": {
                     group_id: {
                         user_id: account.to_dict()
@@ -628,10 +675,23 @@ class FakeForexPlugin(Star):
         return str(getattr(event, "message_str", "") or "")
 
     def _pair_arg(self, text: str) -> str | None:
-        match = re.search(r"([A-Za-z]{3})\s*[/\-]?\s*([A-Za-z]{3})", text)
+        return normalize_pair(text)
+
+    def _parse_instrument_args(self, text: str) -> tuple[str, str, float, int]:
+        match = re.search(
+            r"([A-Za-z0-9]{2,12})\s+([^\d\s]{1,24})\s+(\d+(?:\.\d+)?)(?:\s+(\d+))?",
+            text,
+        )
         if not match:
-            return None
-        return normalize_pair(f"{match.group(1)}/{match.group(2)}")
+            raise FxError("格式：外汇添加股票 <代码> <名称> <初始价> [小数位]。")
+        code, name, price, digits = match.groups()
+        return code, name, float(price), int(digits) if digits else 2
+
+    def _is_admin(self, event: AstrMessageEvent) -> bool:
+        try:
+            return bool(event.is_admin())
+        except Exception:  # noqa: BLE001 - test doubles may not implement it
+            return False
 
     def _numbers(self, text: str) -> list[float]:
         return [float(value) for value in re.findall(r"\d+(?:\.\d+)?", text)]

@@ -18,6 +18,7 @@ from src.engine import (  # noqa: E402
     close_position,
     loan_daily_rate,
     open_position,
+    register_instrument,
     repay,
     tick_market,
 )
@@ -29,23 +30,23 @@ def seeded_market() -> Market:
 
 def test_market_has_all_pairs_and_ticks() -> None:
     market = seeded_market()
-    assert len(market.pairs) == 7
+    assert len(market.pairs) == 14
     assert all(len(series.candles) == 76 for series in market.pairs.values())
 
-    old_price = market.price("EUR/USD")
+    old_price = market.price("SMSC")
     tick_market(market, random.Random(1))
     assert market.tick == 1
-    assert market.price("EUR/USD") != old_price
+    assert market.price("SMSC") != old_price
 
 
 def test_long_position_profit_and_close() -> None:
     market = seeded_market()
     account = Account("u", "Tester")
-    series = market.pairs["EUR/USD"]
+    series = market.pairs["SMSC"]
     series.price = 1.0
     series.candles[-1]["close"] = 1.0
 
-    position = open_position(account, market, "EUR/USD", 1, 100, 10)
+    position = open_position(account, market, "SMSC", 1, 100, 10)
     assert account.cash == 9900
     series.price = 1.1
     assert round(position.pnl(market), 2) == 100
@@ -58,9 +59,9 @@ def test_long_position_profit_and_close() -> None:
 def test_short_position_profit_and_close() -> None:
     market = seeded_market()
     account = Account("u", "Tester")
-    series = market.pairs["GBP/USD"]
+    series = market.pairs["YZCC"]
     series.price = 1.0
-    position = open_position(account, market, "GBP/USD", -1, 100, 10)
+    position = open_position(account, market, "YZCC", -1, 100, 10)
     series.price = 0.9
     assert round(position.pnl(market), 2) == 100
     close_position(account, market, position.id)
@@ -70,9 +71,9 @@ def test_short_position_profit_and_close() -> None:
 def test_liquidation_at_eighty_percent() -> None:
     market = seeded_market()
     account = Account("u", "Tester")
-    series = market.pairs["EUR/USD"]
+    series = market.pairs["SMSC"]
     series.price = 1.0
-    open_position(account, market, "EUR/USD", 1, 100, 10)
+    open_position(account, market, "SMSC", 1, 100, 10)
     series.price = 0.92
 
     events = check_liquidations(account, market)
@@ -104,9 +105,9 @@ def test_loan_interest_and_repay() -> None:
 def test_advance_market_liquidates_across_accounts() -> None:
     market = seeded_market()
     account = Account("u", "Tester")
-    series = market.pairs["EUR/USD"]
+    series = market.pairs["SMSC"]
     series.price = 1.0
-    position = open_position(account, market, "EUR/USD", 1, 100, 10)
+    position = open_position(account, market, "SMSC", 1, 100, 10)
     series.price = 0.5
 
     steps = advance_market(market, [account], tick_seconds=1, max_ticks=1, now=market.last_tick_ts + 1)
@@ -122,13 +123,21 @@ def test_open_position_rejects_invalid_values() -> None:
     try:
         open_position(account, market, "NOPE", 1, 100, 10)
     except FxError as exc:
-        assert "没有这个外汇对" in str(exc)
+        assert "没有这个股票" in str(exc)
     else:  # pragma: no cover - guard against regression
         raise AssertionError("invalid pair should fail")
 
     try:
-        open_position(account, market, "EUR/USD", 1, 1, 10)
+        open_position(account, market, "SMSC", 1, 1, 10)
     except FxError as exc:
         assert "保证金至少" in str(exc)
     else:  # pragma: no cover - guard against regression
         raise AssertionError("small margin should fail")
+
+def test_register_custom_instrument() -> None:
+    definition = register_instrument("TESTX", "测试股", 10.5)
+    assert definition["id"] == "TESTX"
+
+    market = Market.new(random.Random(1))
+    assert "TESTX" in market.pairs
+    assert market.pairs["TESTX"].price > 0

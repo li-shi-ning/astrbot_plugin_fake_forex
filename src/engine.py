@@ -2,63 +2,90 @@ from __future__ import annotations
 
 import math
 import random
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Any
 
-PAIR_DEFS: list[dict[str, Any]] = [
-    {
-        "id": "EUR/USD",
-        "name": "欧元 / 美元",
-        "english": "Euro / US Dollar",
-        "initial": 1.08742,
-        "digits": 5,
-    },
-    {
-        "id": "GBP/USD",
-        "name": "英镑 / 美元",
-        "english": "Pound / US Dollar",
-        "initial": 1.27486,
-        "digits": 5,
-    },
-    {
-        "id": "USD/JPY",
-        "name": "美元 / 日元",
-        "english": "US Dollar / Yen",
-        "initial": 149.382,
-        "digits": 3,
-    },
-    {
-        "id": "USD/CHF",
-        "name": "美元 / 瑞郎",
-        "english": "US Dollar / Franc",
-        "initial": 0.88521,
-        "digits": 5,
-    },
-    {
-        "id": "EUR/CHF",
-        "name": "欧元 / 瑞郎",
-        "english": "Euro / Franc",
-        "initial": 0.94170,
-        "digits": 5,
-    },
-    {
-        "id": "AUD/USD",
-        "name": "澳元 / 美元",
-        "english": "Aussie / US Dollar",
-        "initial": 0.65432,
-        "digits": 5,
-    },
-    {
-        "id": "USD/CAD",
-        "name": "美元 / 加元",
-        "english": "US Dollar / Canadian Dollar",
-        "initial": 1.37185,
-        "digits": 5,
-    },
+INSTRUMENT_DEFS: list[dict[str, Any]] = [
+    {"id": "SMSC", "name": "水母水产", "initial": 12.50, "digits": 2},
+    {"id": "YZCC", "name": "预制菜赌场", "initial": 8.88, "digits": 2},
+    {"id": "HYG", "name": "辉叶股", "initial": 45.60, "digits": 2},
+    {"id": "ZYG", "name": "真叶股", "initial": 52.30, "digits": 2},
+    {"id": "YFNHJ", "name": "茵菲诺黄金", "initial": 188.80, "digits": 2},
+    {"id": "YTG", "name": "芋头股", "initial": 23.45, "digits": 2},
+    {"id": "MYG", "name": "卯月股", "initial": 77.77, "digits": 2},
+    {"id": "ASKC", "name": "爱素矿产", "initial": 31.20, "digits": 2},
+    {"id": "QYJT", "name": "千音集团", "initial": 66.60, "digits": 2},
+    {"id": "NMWY", "name": "糯米文娱", "initial": 18.88, "digits": 2},
+    {"id": "CQSS", "name": "长期素食", "initial": 14.20, "digits": 2},
+    {"id": "BMXY", "name": "白毛兽业", "initial": 9.90, "digits": 2},
+    {"id": "MTDBL", "name": "睦缇斯暴力公司", "initial": 120.00, "digits": 2},
+    {"id": "XYKH", "name": "咲夜航空", "initial": 58.88, "digits": 2},
 ]
-PAIR_IDS = [item["id"] for item in PAIR_DEFS]
-PAIR_MAP = {item["id"]: item for item in PAIR_DEFS}
+PAIR_DEFS = INSTRUMENT_DEFS
+PAIR_IDS = [item["id"] for item in INSTRUMENT_DEFS]
+PAIR_MAP = {item["id"]: item for item in INSTRUMENT_DEFS}
+
+
+def instrument_defs() -> list[dict[str, Any]]:
+    """Return copies of all registered instruments."""
+
+    return [dict(item) for item in INSTRUMENT_DEFS]
+
+
+def register_instrument(
+    code: str,
+    name: str,
+    initial: float,
+    digits: int = 2,
+) -> dict[str, Any]:
+    """Register or update a custom instrument.
+
+    Args:
+        code: Uppercase alphanumeric instrument code.
+        name: Display name shown in messages and images.
+        initial: Initial simulated price.
+        digits: Price decimal precision.
+
+    Returns:
+        The registered instrument definition.
+
+    Raises:
+        FxError: If the code, name, initial price, or precision is invalid.
+    """
+
+    normalized_code = re.sub(r"[^A-Z0-9]", "", str(code or "").upper())
+    if not 2 <= len(normalized_code) <= 12:
+        raise FxError("股票代码必须是 2-12 位字母或数字。")  # noqa: F821
+    normalized_name = str(name or "").strip()
+    if not normalized_name or len(normalized_name) > 24:
+        raise FxError("股票名称不能为空，且不能超过 24 个字。")  # noqa: F821
+    if float(initial) <= 0:
+        raise FxError("初始价格必须大于 0。")  # noqa: F821
+    digits = max(0, min(6, int(digits)))
+    for item in INSTRUMENT_DEFS:
+        if item["id"] == normalized_code:
+            item.update(
+                {
+                    "name": normalized_name,
+                    "initial": float(initial),
+                    "digits": digits,
+                }
+            )
+            PAIR_MAP[normalized_code] = item
+            return dict(item)
+    definition = {
+        "id": normalized_code,
+        "name": normalized_name,
+        "initial": float(initial),
+        "digits": digits,
+    }
+    INSTRUMENT_DEFS.append(definition)
+    PAIR_IDS.append(normalized_code)
+    PAIR_MAP[normalized_code] = definition
+    return dict(definition)
+
 
 INITIAL_CASH = 10000.0
 MIN_MARGIN = 10.0
@@ -132,32 +159,37 @@ def loan_daily_rate(amount: float) -> float:
     return 0.0004
 
 
+def _seed_series(
+    item: dict[str, Any], rng: random.Random, index: int = 0
+) -> dict[str, Any]:
+    """Build one simulated price series for an instrument."""
+
+    value = float(item["initial"])
+    candles: list[dict[str, float]] = []
+    for step in range(SEED_CANDLES):
+        open_price = value
+        wave = (
+            math.sin(step * 0.43 + index * 1.9) * 0.0008
+            + math.cos(step * 0.19 + index) * 0.00055
+        )
+        value = open_price * (1 + wave + (rng.random() - 0.5) * 0.0019)
+        spread = open_price * (0.0005 + rng.random() * 0.00065)
+        candles.append(
+            {
+                "open": open_price,
+                "high": max(open_price, value) + spread,
+                "low": min(open_price, value) - spread,
+                "close": value,
+            }
+        )
+    return {"id": item["id"], "price": value, "candles": candles}
+
+
 def _seed_market(rng: random.Random) -> dict[str, Any]:
-    pairs: dict[str, Any] = {}
-    for index, item in enumerate(PAIR_DEFS):
-        value = float(item["initial"])
-        candles: list[dict[str, float]] = []
-        for step in range(SEED_CANDLES):
-            open_price = value
-            wave = (
-                math.sin(step * 0.43 + index * 1.9) * 0.0008
-                + math.cos(step * 0.19 + index) * 0.00055
-            )
-            value = open_price * (1 + wave + (rng.random() - 0.5) * 0.0019)
-            spread = open_price * (0.0005 + rng.random() * 0.00065)
-            candles.append(
-                {
-                    "open": open_price,
-                    "high": max(open_price, value) + spread,
-                    "low": min(open_price, value) - spread,
-                    "close": value,
-                }
-            )
-        pairs[item["id"]] = {
-            "id": item["id"],
-            "price": value,
-            "candles": candles,
-        }
+    pairs = {
+        item["id"]: _seed_series(item, rng, index)
+        for index, item in enumerate(INSTRUMENT_DEFS)
+    }
     return {"tick": 0, "last_tick_ts": time.time(), "pairs": pairs}
 
 
@@ -204,6 +236,19 @@ class Market:
     def price(self, pair_id: str) -> float:
         return self.pairs[pair_id].price
 
+    def add_instrument(
+        self, item: dict[str, Any], rng: random.Random | None = None
+    ) -> PairSeries:
+        """Add one simulated instrument series to the market."""
+
+        pair_id = str(item["id"])
+        if pair_id in self.pairs:
+            return self.pairs[pair_id]
+        index = len(self.pairs)
+        series = _seed_series(item, rng or random.Random(), index)
+        self.pairs[pair_id] = PairSeries.from_dict(series)
+        return self.pairs[pair_id]
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "tick": self.tick,
@@ -222,13 +267,9 @@ class Market:
             tick=int(data.get("tick") or 0),
             last_tick_ts=float(data.get("last_tick_ts") or time.time()),
         )
-        for item in PAIR_DEFS:
+        for item in INSTRUMENT_DEFS:
             if item["id"] not in market.pairs:
-                market.pairs[item["id"]] = PairSeries(
-                    id=item["id"],
-                    price=float(item["initial"]),
-                    candles=[],
-                )
+                market.add_instrument(item)
         return market
 
 
@@ -398,7 +439,7 @@ def open_position(
 
     normalized = normalize_pair(pair_id)
     if normalized is None:
-        raise FxError("没有这个外汇对。")
+        raise FxError("没有这个股票。")
     if side not in {1, -1}:
         raise FxError("方向只能是做多或做空。")
     margin_value = float(margin if margin is not None else account.margin_default)
