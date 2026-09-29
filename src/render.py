@@ -11,7 +11,7 @@ from .engine import (
     Account,
     Market,
     money,
-    organ_day_total,
+    organ_income_total,
     price_text,
     signed_money,
 )
@@ -353,8 +353,8 @@ def render_history(account: Account, limit: int = 12) -> bytes:
     return _png_bytes(image)
 
 
-def render_organs(account: Account, day: str) -> bytes:
-    """Render the organ selling catalog and today's sold status."""
+def render_organs(account: Account) -> bytes:
+    """Render the organ catalog and current sold status."""
 
     row_height = 34
     height = 150 + len(ORGAN_DEFS) * row_height + 20
@@ -364,20 +364,21 @@ def render_organs(account: Account, day: str) -> bytes:
     _text(
         draw,
         (28, 60),
-        f"今日器官收入 {money(organ_day_total(account, day))}",
+        f"已出售 {len(account.organ_sold)}/{len(ORGAN_DEFS)} 个器官，"
+        f"累计净收入 {money(organ_income_total(account))}",
         font=_font(15),
         fill=MUTED,
     )
     _text(
         draw,
-        (WIDTH - 260, 60),
-        "出售不影响交易和健康",
+        (WIDTH - 300, 60),
+        "出售不影响交易和健康，可随时买回",
         font=_font(14, True),
         fill=YELLOW,
     )
     for index, item in enumerate(ORGAN_DEFS):
         top = 104 + index * row_height
-        sold = account.organ_sold_day.get(item["id"]) == day
+        sold = item["id"] in account.organ_sold
         draw.rounded_rectangle(
             (24, top, WIDTH - 24, top + row_height - 6), radius=8, fill=PANEL
         )
@@ -391,8 +392,8 @@ def render_organs(account: Account, day: str) -> bytes:
         )
         _text(
             draw,
-            (WIDTH - 190, top + 4),
-            "今日已卖" if sold else "今日可卖",
+            (WIDTH - 210, top + 4),
+            "已出售" if sold else "未出售",
             font=_font(13, True),
             fill=RED if sold else GREEN,
         )

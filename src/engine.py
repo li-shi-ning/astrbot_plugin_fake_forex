@@ -212,51 +212,92 @@ def normalize_organ(text: str) -> str | None:
     return None
 
 
-def organ_day_total(account: Account, day: str) -> float:
-    """Return how much the account earned from organs on *day*."""
+def organ_income_total(account: Account) -> float:
+    """Return net cash earned from selling organs."""
 
-    return sum(
-        float(item.get("price") or 0)
-        for item in account.organ_history
-        if item.get("day") == day
-    )
+    total = 0.0
+    for item in account.organ_history:
+        price = float(item.get("price") or 0)
+        if item.get("action") == "buy":
+            total -= price
+        else:
+            total += price
+    return total
 
 
-def sell_organ(account: Account, organ_id: str, day: str) -> dict[str, Any]:
+def sell_organ(account: Account, organ_id: str) -> dict[str, Any]:
     """Sell one organ for cash without affecting trading.
 
-    Each organ can be sold once per day.
+    Each organ can be sold once until the player buys it back.
 
     Raises:
-        FxError: If the organ is unknown or was already sold today.
+        FxError: If the organ is unknown or already sold.
     """
 
     normalized = normalize_organ(organ_id)
     if normalized is None:
         raise FxError("没有这个器官。")
-    if account.organ_sold_day.get(normalized) == day:
-        raise FxError(f"今天已经卖过{ORGAN_MAP[normalized]['name']}了。")
+    if normalized in account.organ_sold:
+        raise FxError(f"已经卖过{ORGAN_MAP[normalized]['name']}了，可以先买回来。")
     item = ORGAN_MAP[normalized]
     price = float(item["price"])
     account.cash += price
-    account.organ_sold_day[normalized] = day
+    account.organ_sold.append(normalized)
     account.organ_history.insert(
         0,
         {
+            "action": "sell",
             "organ": item["name"],
             "organ_id": normalized,
             "price": price,
-            "day": day,
             "time": time.time(),
         },
     )
-    del account.organ_history[40:]
+    del account.organ_history[80:]
     return {
         "id": normalized,
         "name": item["name"],
         "price": price,
         "cash": account.cash,
-        "day_total": organ_day_total(account, day),
+        "income": organ_income_total(account),
+    }
+
+
+def buy_organ(account: Account, organ_id: str) -> dict[str, Any]:
+    """Buy back an organ that was sold earlier.
+
+    Raises:
+        FxError: If the organ is unknown, not sold, or cash is insufficient.
+    """
+
+    normalized = normalize_organ(organ_id)
+    if normalized is None:
+        raise FxError("没有这个器官。")
+    if normalized not in account.organ_sold:
+        raise FxError(f"你还没有卖掉{ORGAN_MAP[normalized]['name']}。")
+    item = ORGAN_MAP[normalized]
+    price = float(item["price"])
+    if account.cash < price:
+        raise FxError(f"现金不足，买回{item['name']}需要 {money(price)}。")
+    account.cash -= price
+    account.organ_sold.remove(normalized)
+    account.organ_history.insert(
+        0,
+        {
+            "action": "buy",
+            "organ": item["name"],
+            "organ_id": normalized,
+            "price": price,
+            "time": time.time(),
+        },
+    )
+    del account.organ_history[80:]
+    return {
+        "id": normalized,
+        "name": item["name"],
+        "price": price,
+        "cash": account.cash,
+        "income": organ_income_total(account),
     }
 
 
@@ -643,7 +684,7 @@ class Account:
     loan_last_ts: float = 0.0
     loan_extra_limit: float = 0.0
     loan_day: str = ""
-    organ_sold_day: dict[str, str] = field(default_factory=dict)
+    organ_sold: list[str] = field(default_factory=list)
     organ_history: list[dict[str, Any]] = field(default_factory=list)
     margin_default: float = DEFAULT_MARGIN
     leverage_default: int = DEFAULT_LEVERAGE
@@ -672,7 +713,7 @@ class Account:
             "loan_last_ts": self.loan_last_ts,
             "loan_extra_limit": self.loan_extra_limit,
             "loan_day": self.loan_day,
-            "organ_sold_day": self.organ_sold_day,
+            "organ_sold": self.organ_sold,
             "organ_history": self.organ_history,
             "margin_default": self.margin_default,
             "leverage_default": self.leverage_default,
@@ -696,10 +737,10 @@ class Account:
             loan_last_ts=float(data.get("loan_last_ts") or 0),
             loan_extra_limit=float(data.get("loan_extra_limit") or 0),
             loan_day=str(data.get("loan_day") or ""),
-            organ_sold_day={
-                str(key): str(value)
-                for key, value in dict(data.get("organ_sold_day") or {}).items()
-            },
+            organ_sold=(
+                [str(value) for value in data.get("organ_sold") or []]
+                or [str(key) for key in dict(data.get("organ_sold_day") or {}).keys()]
+            ),
             organ_history=list(data.get("organ_history") or []),
             margin_default=max(
                 MIN_MARGIN, float(data.get("margin_default") or DEFAULT_MARGIN)

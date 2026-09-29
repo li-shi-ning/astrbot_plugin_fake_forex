@@ -18,6 +18,7 @@ from src.engine import (  # noqa: E402
     accrue_interest,
     advance_market,
     borrow,
+    buy_organ,
     check_liquidations,
     close_position,
     loan_daily_rate,
@@ -294,24 +295,27 @@ def test_high_volatility_reduces_max_leverage() -> None:
     ]
     assert market.max_leverage("SMSC") < 100
 
-def test_sell_organ_once_per_day() -> None:
+def test_sell_and_buy_back_organ() -> None:
     account = Account("u", "Tester")
     catalog = organ_defs()
     assert len(catalog) >= 20
 
-    result = sell_organ(account, "心脏", "2026-01-01")
+    result = sell_organ(account, "心脏")
     assert result["name"] == "心脏"
     assert account.cash == 10000 + result["price"]
 
     try:
-        sell_organ(account, "心脏", "2026-01-01")
+        sell_organ(account, "心脏")
     except FxError as exc:
-        assert "今天已经卖过" in str(exc)
+        assert "已经卖过" in str(exc)
     else:  # pragma: no cover - guard against regression
-        raise AssertionError("same organ should not sell twice per day")
+        raise AssertionError("sold organ should not be sold twice")
 
-    sell_organ(account, "心脏", "2026-01-02")
-    assert account.cash == 10000 + result["price"] * 2
+    buy_organ(account, "心脏")
+    assert account.cash == 10000
+
+    sell_organ(account, "心脏")
+    assert account.cash == 10000 + result["price"]
 
 
 def test_daily_extra_loan_ceiling() -> None:

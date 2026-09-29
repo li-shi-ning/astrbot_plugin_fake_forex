@@ -21,6 +21,7 @@ try:
         Market,
         advance_market,
         borrow,
+        buy_organ,
         close_position,
         instrument_defs,
         loan_limit,
@@ -28,8 +29,8 @@ try:
         normalize_organ,
         normalize_pair,
         open_position,
-        organ_day_total,
         organ_defs,
+        organ_income_total,
         price_text,
         register_instrument,
         repay,
@@ -59,6 +60,7 @@ except ImportError:  # pragma: no cover - direct local import fallback
         Market,
         advance_market,
         borrow,
+        buy_organ,
         close_position,
         instrument_defs,
         loan_limit,
@@ -66,7 +68,6 @@ except ImportError:  # pragma: no cover - direct local import fallback
         normalize_organ,
         normalize_pair,
         open_position,
-        organ_day_total,
         organ_defs,
         price_text,
         register_instrument,
@@ -274,6 +275,12 @@ class FakeForexPlugin(Star):
             yield result
         event.stop_event()
 
+    @filter.command("外汇买器官", alias={"买器官", "购回器官", "器官买回"})
+    async def buy_organ_command(self, event: AstrMessageEvent):
+        async for result in self._handle_command(event, "buy_organ"):
+            yield result
+        event.stop_event()
+
     # ------------------------------------------------------------------
     # Dispatch
     # ------------------------------------------------------------------
@@ -464,20 +471,25 @@ class FakeForexPlugin(Star):
             )
         if command == "organs":
             return self._with_notes(notes, self._organs_outcome(account))
-        if command == "sell_organ":
+        if command in {"sell_organ", "buy_organ"}:
             organ_id = normalize_organ(text)
             if organ_id is None:
                 raise FxError("请带上器官名，例如：外汇卖器官 心脏。")
-            result = sell_organ(account, organ_id, day)
+            if command == "sell_organ":
+                result = sell_organ(account, organ_id)
+                action = "出售"
+            else:
+                result = buy_organ(account, organ_id)
+                action = "买回"
             return self._with_notes(
                 notes,
                 CommandOutcome(
                     text=(
-                        f"已出售 {result['name']}，到账 {money(result['price'])}；"
-                        f"今日器官收入 {money(result['day_total'])}。"
+                        f"已{action} {result['name']}，金额 {money(result['price'])}；"
+                        f"累计净收入 {money(result['income'])}。"
                     ),
-                    image=render_organs(account, day),
-                    buttons=self._organ_buttons(account, day),
+                    image=render_organs(account),
+                    buttons=self._organ_buttons(account),
                 ),
             )
         if command == "add_instrument":
@@ -502,23 +514,27 @@ class FakeForexPlugin(Star):
     # Outcomes and buttons
     # ------------------------------------------------------------------
     def _organs_outcome(self, account: Account) -> CommandOutcome:
-        day = self._today()
         return CommandOutcome(
-            text=f"器官回收站，今日已卖 {money(organ_day_total(account, day))}",
-            image=render_organs(account, day),
-            buttons=self._organ_buttons(account, day),
+            text=(
+                f"器官回收站，已出售 {len(account.organ_sold)}/{len(organ_defs())} 个器官，"
+                f"累计净收入 {money(organ_income_total(account))}"
+            ),
+            image=render_organs(account),
+            buttons=self._organ_buttons(account),
         )
 
-    def _organ_buttons(self, account: Account, day: str) -> list[ButtonSpec]:
+    def _organ_buttons(self, account: Account) -> list[ButtonSpec]:
         buttons: list[ButtonSpec] = []
         for index, item in enumerate(organ_defs(), start=1):
-            sold = account.organ_sold_day.get(item["id"]) == day
+            sold = item["id"] in account.organ_sold
             price_label = f"{item['price'] / 1000:.0f}k"
             buttons.append(
                 ButtonSpec(
                     f"fx_organ_{index}",
                     f"{item['name']} {price_label}{' 已卖' if sold else ''}",
-                    f"外汇卖器官 {item['name']}",
+                    f"外汇买器官 {item['name']}"
+                    if sold
+                    else f"外汇卖器官 {item['name']}",
                 )
             )
         buttons.append(ButtonSpec("fx_organ_account", "账户", "外汇账户"))
@@ -536,7 +552,7 @@ class FakeForexPlugin(Star):
             "外汇持仓 / 外汇平仓 编号\n"
             "外汇账户 / 外汇历史\n"
             "外汇设置 保证金 500 / 外汇设置 杠杆 20\n"
-            "外汇器官 / 外汇卖器官 心脏\n"
+            "外汇器官 / 外汇卖器官 心脏 / 外汇买器官 心脏\n"
             "外汇借款 10000 / 外汇还款 5000\n"
             "管理员：外汇添加股票 <代码> <名称> <初始价>\n\n"
             "规则：最低保证金 $10，最大杠杆 100x；"
