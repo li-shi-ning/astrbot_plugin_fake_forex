@@ -165,3 +165,48 @@ def test_lottery_rank_command(tmp_path: Path) -> None:
 
         assert event.bot.api.group_messages
         assert "排行" in str(event.bot.api.group_messages[-1]["markdown"])
+
+def test_marketplace_list_and_buy_flow(tmp_path: Path) -> None:
+    with patch.object(plugin_main.StarTools, "get_data_dir", return_value=tmp_path):
+        plugin = plugin_main.FakeForexPlugin(context=SimpleNamespace(), config={"tick_seconds": 3600})
+        run(plugin.initialize())
+        owner = FakeEvent("owner")
+        buyer = FakeEvent("buyer")
+
+        owner.message_str = "上架 空气 100"
+        run(collect(plugin.market_list_command(owner)))
+        assert len(plugin.market_listings) == 1
+        listing_id = next(iter(plugin.market_listings))
+
+        buyer.message_str = f"购买 {listing_id}"
+        run(collect(plugin.market_buy_command(buyer)))
+
+        owner_account = plugin.accounts["group-id"]["owner"]
+        buyer_account = plugin.accounts["group-id"]["buyer"]
+        assert owner_account.cash == 10100.0
+        assert buyer_account.cash == 9900.0
+        assert buyer_account.inventory[0]["name"] == "空气"
+        assert plugin.market_listings == {}
+        assert buyer_account.trading_pnl(plugin.market) == 0.0
+
+
+def test_marketplace_limit_and_negative_price(tmp_path: Path) -> None:
+    with patch.object(plugin_main.StarTools, "get_data_dir", return_value=tmp_path):
+        plugin = plugin_main.FakeForexPlugin(context=SimpleNamespace(), config={"tick_seconds": 3600})
+        run(plugin.initialize())
+        owner = FakeEvent("owner")
+
+        for index in range(5):
+            owner.message_str = f"上架 商品{index} {index + 1}"
+            run(collect(plugin.market_list_command(owner)))
+        assert len(plugin.market_listings) == 5
+
+        owner.message_str = "上架 商品5 6"
+        results = run(collect(plugin.market_list_command(owner)))
+        assert results
+        assert len(plugin.market_listings) == 5
+
+        owner.message_str = "上架 负数商品 -1"
+        results = run(collect(plugin.market_list_command(owner)))
+        assert results
+        assert len(plugin.market_listings) == 5

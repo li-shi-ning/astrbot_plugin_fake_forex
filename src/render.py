@@ -613,3 +613,126 @@ def render_lottery_leaderboard(entries: list[dict[str, Any]], pool: float) -> by
             fill=gray,
         )
     return _png_bytes(image)
+
+
+def render_marketplace(listings: list[dict[str, Any]], account_name: str) -> bytes:
+    """Render the player bazaar listing board."""
+
+    height = 170 + max(1, len(listings)) * 38
+    image = Image.new("RGB", (760, height), (248, 250, 252))
+    draw = ImageDraw.Draw(image)
+    blue = (37, 99, 235)
+    gray = (90, 100, 115)
+    draw.rounded_rectangle((14, 14, 746, height - 14), radius=16, outline=blue, width=3)
+    _text(draw, (36, 28), "集市", font=_font(26, True), fill=blue)
+    _text(
+        draw,
+        (36, 66),
+        f"玩家：{account_name}    商品数：{len(listings)}",
+        font=_font(15),
+        fill=gray,
+    )
+    if not listings:
+        _text(
+            draw,
+            (36, 130),
+            "暂无商品，点击“上架”发布第一个商品",
+            font=_font(16),
+            fill=gray,
+        )
+        return _png_bytes(image)
+
+    _text(draw, (50, 106), "编号", font=_font(13), fill=gray)
+    _text(draw, (150, 106), "商品", font=_font(13), fill=gray)
+    _text(draw, (470, 106), "价格", font=_font(13), fill=gray)
+    _text(draw, (620, 106), "卖家", font=_font(13), fill=gray)
+    for index, item in enumerate(listings):
+        top = 136 + index * 38
+        draw.rounded_rectangle((24, top, 736, top + 32), radius=8, fill=(255, 255, 255))
+        draw.rectangle((24, top, 30, top + 32), fill=blue)
+        _text(
+            draw,
+            (50, top + 6),
+            str(item.get("id") or ""),
+            font=_font(15, True),
+            fill=blue,
+        )
+        _text(
+            draw,
+            (150, top + 6),
+            str(item.get("name") or "商品")[:20],
+            font=_font(15, True),
+            fill=(30, 35, 45),
+        )
+        _text(
+            draw,
+            (470, top + 6),
+            money(float(item.get("price") or 0)),
+            font=_font(15, True),
+            fill=blue,
+        )
+        _text(
+            draw,
+            (620, top + 6),
+            str(item.get("seller_name") or "玩家")[:12],
+            font=_font(13),
+            fill=gray,
+        )
+    return _png_bytes(image)
+
+
+def render_backpack(account: Account) -> bytes:
+    """Render the player's purchased items."""
+
+    items = account.inventory
+    height = 170 + max(1, len(items)) * 38
+    image = Image.new("RGB", (760, height), (248, 250, 252))
+    draw = ImageDraw.Draw(image)
+    blue = (37, 99, 235)
+    gray = (90, 100, 115)
+    draw.rounded_rectangle((14, 14, 746, height - 14), radius=16, outline=blue, width=3)
+    _text(draw, (36, 28), "背包", font=_font(26, True), fill=blue)
+    _text(
+        draw,
+        (36, 66),
+        f"物品数：{len(items)}",
+        font=_font(15),
+        fill=gray,
+    )
+    if not items:
+        _text(
+            draw, (36, 130), "背包是空的，去集市买点东西吧", font=_font(16), fill=gray
+        )
+        return _png_bytes(image)
+
+    _text(draw, (50, 106), "序号", font=_font(13), fill=gray)
+    _text(draw, (150, 106), "商品", font=_font(13), fill=gray)
+    _text(draw, (470, 106), "入手价", font=_font(13), fill=gray)
+    _text(draw, (620, 106), "卖家", font=_font(13), fill=gray)
+    for index, item in enumerate(items[:30]):
+        top = 136 + index * 38
+        draw.rounded_rectangle((24, top, 736, top + 32), radius=8, fill=(255, 255, 255))
+        draw.rectangle((24, top, 30, top + 32), fill=blue)
+        _text(draw, (50, top + 6), str(index + 1), font=_font(14, True), fill=blue)
+        _text(
+            draw,
+            (150, top + 6),
+            str(item.get("name") or "商品")[:20],
+            font=_font(15, True),
+            fill=(30, 35, 45),
+        )
+        _text(
+            draw,
+            (470, top + 6),
+            money(float(item.get("price") or 0)),
+            font=_font(14, True),
+            fill=blue,
+        )
+        _text(
+            draw,
+            (620, top + 6),
+            str(item.get("seller_name") or "玩家")[:12],
+            font=_font(13),
+            fill=gray,
+        )
+    return _png_bytes(image)

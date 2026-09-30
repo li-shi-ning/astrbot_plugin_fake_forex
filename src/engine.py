@@ -786,6 +786,7 @@ class Account:
     lottery_history: list[dict[str, Any]] = field(default_factory=list)
     lottery_winnings: float = 0.0
     lottery_win_count: int = 0
+    inventory: list[dict[str, Any]] = field(default_factory=list)
     margin_default: float = DEFAULT_MARGIN
     leverage_default: int = DEFAULT_LEVERAGE
     positions: list[Position] = field(default_factory=list)
@@ -827,6 +828,7 @@ class Account:
             "lottery_history": self.lottery_history,
             "lottery_winnings": self.lottery_winnings,
             "lottery_win_count": self.lottery_win_count,
+            "inventory": self.inventory,
             "margin_default": self.margin_default,
             "leverage_default": self.leverage_default,
             "positions": [position.to_dict() for position in self.positions],
@@ -875,6 +877,7 @@ class Account:
             lottery_history=lottery_history,
             lottery_winnings=lottery_winnings,
             lottery_win_count=lottery_win_count,
+            inventory=list(data.get("inventory") or []),
             margin_default=max(
                 MIN_MARGIN, float(data.get("margin_default") or DEFAULT_MARGIN)
             ),

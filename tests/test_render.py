@@ -11,12 +11,14 @@ if str(PLUGIN_DIR) not in sys.path:
 from src.engine import Account, Market, open_position  # noqa: E402
 from src.render import (  # noqa: E402
     render_account,
+    render_backpack,
     render_chart,
     render_history,
     render_leaderboard,
     render_lottery_leaderboard,
     render_lottery_ticket,
     render_market,
+    render_marketplace,
 )
 
 
@@ -30,6 +32,18 @@ def test_renderers_return_png_bytes() -> None:
         render_chart(market, "SMSC"),
         render_account(account, market),
         render_history(account),
+        render_marketplace(
+            [
+                {
+                    "id": "1",
+                    "name": "空气",
+                    "price": 100.0,
+                    "seller_name": "甲",
+                }
+            ],
+            "Tester",
+        ),
+        render_backpack(account),
         render_leaderboard(
             [
                 {"rank": 1, "name": "甲", "pnl": 100.0, "equity": 10100.0},

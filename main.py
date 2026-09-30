@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import re
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -51,12 +52,14 @@ try:
     )
     from .src.render import (
         render_account,
+        render_backpack,
         render_chart,
         render_history,
         render_leaderboard,
         render_lottery_leaderboard,
         render_lottery_ticket,
         render_market,
+        render_marketplace,
         render_organs,
     )
     from .src.storage import FxStore
@@ -98,12 +101,14 @@ except ImportError:  # pragma: no cover - direct local import fallback
     )
     from src.render import (
         render_account,
+        render_backpack,
         render_chart,
         render_history,
         render_leaderboard,
         render_lottery_leaderboard,
         render_lottery_ticket,
         render_market,
+        render_marketplace,
         render_organs,
     )
     from src.storage import FxStore
@@ -144,6 +149,8 @@ class FakeForexPlugin(Star):
         self.store = FxStore(data_dir / STATE_FILENAME)
         self.market = Market.new()
         self.lottery_pool = LOTTERY_BASE_POOL
+        self.market_listings: dict[str, dict[str, Any]] = {}
+        self.next_listing_id = 1
         self.accounts: dict[str, dict[str, Account]] = {}
         self.lock = asyncio.Lock()
         self.lottery_lock = asyncio.Lock()
@@ -324,6 +331,36 @@ class FakeForexPlugin(Star):
     )
     async def lottery_rank_command(self, event: AstrMessageEvent):
         async for result in self._handle_command(event, "lottery_rank"):
+            yield result
+        event.stop_event()
+
+    @filter.command("市场菜单", alias={"市场", "集市", "市场帮助"})
+    async def market_menu_command(self, event: AstrMessageEvent):
+        async for result in self._handle_command(event, "market_menu"):
+            yield result
+        event.stop_event()
+
+    @filter.command("上架", alias={"市场出售", "出售商品", "上架商品"})
+    async def market_list_command(self, event: AstrMessageEvent):
+        async for result in self._handle_command(event, "market_list"):
+            yield result
+        event.stop_event()
+
+    @filter.command("下架", alias={"市场下架", "下架商品"})
+    async def market_cancel_command(self, event: AstrMessageEvent):
+        async for result in self._handle_command(event, "market_cancel"):
+            yield result
+        event.stop_event()
+
+    @filter.command("购买", alias={"买商品", "市场购买", "购买商品"})
+    async def market_buy_command(self, event: AstrMessageEvent):
+        async for result in self._handle_command(event, "market_buy"):
+            yield result
+        event.stop_event()
+
+    @filter.command("背包", alias={"我的背包", "查看背包"})
+    async def backpack_command(self, event: AstrMessageEvent):
+        async for result in self._handle_command(event, "backpack"):
             yield result
         event.stop_event()
 
@@ -615,6 +652,114 @@ class FakeForexPlugin(Star):
                     buttons=self._lottery_buttons(),
                 ),
             )
+        if command == "market_menu":
+            listings = self._sorted_listings()
+            return self._with_notes(
+                notes,
+                CommandOutcome(
+                    text=f"集市：当前 {len(listings)} 件商品，每人最多上架 5 件。",
+                    image=render_marketplace(listings, account.name),
+                    buttons=self._marketplace_buttons(account),
+                ),
+            )
+        if command == "market_list":
+            name, price = self._parse_listing_args(text)
+            mine = [
+                item
+                for item in self.market_listings.values()
+                if item.get("seller_group") == group_id
+                and item.get("seller_id") == user_id
+            ]
+            if len(mine) >= 5:
+                raise FxError("你最多只能同时上架 5 件商品，请先下架一些。")
+            listing_id = str(self.next_listing_id)
+            self.next_listing_id += 1
+            self.market_listings[listing_id] = {
+                "id": listing_id,
+                "name": name,
+                "price": float(price),
+                "seller_group": group_id,
+                "seller_id": user_id,
+                "seller_name": account.name,
+                "created_at": time.time(),
+            }
+            listings = self._sorted_listings()
+            return self._with_notes(
+                notes,
+                CommandOutcome(
+                    text=f"已上架 #{listing_id} {name}，价格 {money(price)}。",
+                    image=render_marketplace(listings, account.name),
+                    buttons=self._marketplace_buttons(account),
+                ),
+            )
+        if command == "market_cancel":
+            listing_id = self._listing_id_arg(text)
+            listing = self.market_listings.get(listing_id)
+            if listing is None:
+                raise FxError("找不到这个商品编号。")
+            if not (
+                listing.get("seller_group") == group_id
+                and listing.get("seller_id") == user_id
+            ):
+                raise FxError("只能下架自己的商品。")
+            del self.market_listings[listing_id]
+            listings = self._sorted_listings()
+            return self._with_notes(
+                notes,
+                CommandOutcome(
+                    text=f"已下架 #{listing_id} {listing.get('name')}。",
+                    image=render_marketplace(listings, account.name),
+                    buttons=self._marketplace_buttons(account),
+                ),
+            )
+        if command == "market_buy":
+            listing_id = self._listing_id_arg(text)
+            listing = self.market_listings.get(listing_id)
+            if listing is None:
+                raise FxError("找不到这个商品编号。")
+            if (
+                listing.get("seller_group") == group_id
+                and listing.get("seller_id") == user_id
+            ):
+                raise FxError("不能购买自己的商品。")
+            price = float(listing.get("price") or 0)
+            if account.cash < price:
+                raise FxError(f"现金不足，购买需要 {money(price)}。")
+            seller_group = str(listing.get("seller_group") or "")
+            seller_id = str(listing.get("seller_id") or "")
+            seller = self.accounts.get(seller_group, {}).get(seller_id)
+            if seller is None:
+                raise FxError("卖家账户不存在。")
+            account.cash -= price
+            seller.cash += price
+            account.inventory.append(
+                {
+                    "name": str(listing.get("name") or "商品"),
+                    "price": price,
+                    "seller_name": str(listing.get("seller_name") or "玩家"),
+                    "time": time.time(),
+                }
+            )
+            del self.market_listings[listing_id]
+            return self._with_notes(
+                notes,
+                CommandOutcome(
+                    text=(
+                        f"已购买 #{listing_id} {listing.get('name')}，"
+                        f"花费 {money(price)}，已放入背包。"
+                    ),
+                    buttons=self._backpack_buttons(),
+                ),
+            )
+        if command == "backpack":
+            return self._with_notes(
+                notes,
+                CommandOutcome(
+                    text=f"背包：{len(account.inventory)} 件物品",
+                    image=render_backpack(account),
+                    buttons=self._backpack_buttons(),
+                ),
+            )
         if command == "lottery_buy":
             match = re.search(r"\d+", text)
             if match is None:
@@ -715,6 +860,80 @@ class FakeForexPlugin(Star):
         buttons.append(ButtonSpec("fx_organ_help", "帮助", "外汇帮助"))
         return buttons
 
+    def _sorted_listings(self) -> list[dict[str, Any]]:
+        return sorted(
+            self.market_listings.values(),
+            key=lambda item: int(item.get("id") or 0),
+        )
+
+    def _marketplace_buttons(self, account: Account) -> list[ButtonSpec]:
+        buttons: list[ButtonSpec] = [
+            ButtonSpec("fx_market_list", "上架", "上架 "),
+            ButtonSpec("fx_market_backpack", "背包", "背包"),
+            ButtonSpec("fx_market_account", "账户", "外汇账户"),
+            ButtonSpec("fx_market_help", "帮助", "市场帮助"),
+        ]
+        for item in self._sorted_listings():
+            if len(buttons) >= 25:
+                break
+            listing_id = str(item.get("id") or "")
+            price = float(item.get("price") or 0)
+            label = f"{str(item.get('name') or '商品')[:6]} ${price:.0f}"
+            if item.get("seller_id") == account.user_id:
+                buttons.append(
+                    ButtonSpec(
+                        f"fx_market_cancel_{listing_id}",
+                        f"下架 {label}",
+                        f"下架 {listing_id}",
+                        only_for=account.user_id,
+                    )
+                )
+            else:
+                buttons.append(
+                    ButtonSpec(
+                        f"fx_market_buy_{listing_id}",
+                        f"买 {label}",
+                        f"购买 {listing_id}",
+                    )
+                )
+        return buttons
+
+    def _backpack_buttons(self) -> list[ButtonSpec]:
+        return [
+            ButtonSpec("fx_backpack_market", "市场", "市场菜单"),
+            ButtonSpec("fx_backpack_account", "账户", "外汇账户"),
+            ButtonSpec("fx_backpack_help", "帮助", "市场帮助"),
+        ]
+
+    def _next_listing_id_from_existing(self) -> int:
+        ids = [
+            int(item.get("id") or 0)
+            for item in self.market_listings.values()
+            if str(item.get("id") or "").isdigit()
+        ]
+        return max(ids, default=0) + 1
+
+    def _parse_listing_args(self, text: str) -> tuple[str, float]:
+        stripped = re.sub(r"^(?:市场出售|出售商品|上架商品|上架)\s*", "", text).strip()
+        match = re.match(r"(.+?)\s+(\d+(?:\.\d+)?)$", stripped)
+        if match is None:
+            if "-" in stripped:
+                raise FxError("价格不能为负数。")
+            raise FxError("格式：上架 <商品名> <价格>，例如：上架 空气 100。")
+        name = match.group(1).strip()
+        if not name:
+            raise FxError("商品名不能为空。")
+        price = float(match.group(2))
+        if price < 0:
+            raise FxError("价格不能为负数。")
+        return name[:30], price
+
+    def _listing_id_arg(self, text: str) -> str:
+        match = re.search(r"#?(\d+)", text)
+        if match is None:
+            raise FxError("请带上商品编号，例如：购买 3。")
+        return match.group(1)
+
     def _lottery_buttons(self) -> list[ButtonSpec]:
         return [
             ButtonSpec("fx_lottery_buy", "买彩票", "买彩票 "),
@@ -735,6 +954,7 @@ class FakeForexPlugin(Star):
             "外汇持仓 / 外汇平仓 编号\n"
             "外汇账户 / 外汇历史 / 外汇排行 / 破产申请\n"
             "彩票菜单 / 买彩票 88 / 彩票奖池 / 彩票排行\n"
+            "市场菜单 / 上架 空气 100 / 购买 1 / 背包\n"
             "外汇设置 保证金 500 / 外汇设置 杠杆 20\n"
             "外汇器官 / 外汇卖器官 心脏 / 外汇买器官 心脏\n"
             "外汇借款 10000 / 外汇还款 5000\n"
@@ -812,6 +1032,7 @@ class FakeForexPlugin(Star):
             ButtonSpec("fx_menu_repay", "还款", "外汇还款 5000"),
             ButtonSpec("fx_menu_bankruptcy", "破产申请", "破产申请"),
             ButtonSpec("fx_menu_lottery", "彩票", "彩票菜单"),
+            ButtonSpec("fx_menu_market", "市场", "市场菜单"),
             ButtonSpec("fx_menu_help", "帮助", "外汇帮助"),
         ]
 
@@ -940,6 +1161,8 @@ class FakeForexPlugin(Star):
             {
                 "market": self.market.to_dict(),
                 "lottery_pool": self.lottery_pool,
+                "market_listings": self.market_listings,
+                "next_listing_id": self.next_listing_id,
                 "instruments": instrument_defs(),
                 "groups": {
                     group_id: {
