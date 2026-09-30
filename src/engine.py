@@ -131,6 +131,7 @@ DAILY_EXTRA_LOAN = 200000.0
 LOTTERY_BASE_POOL = 200000.0
 LOTTERY_TICKET_PRICE = 100.0
 LOTTERY_POOL_INCREASE = LOTTERY_TICKET_PRICE * 100
+LOTTERY_MAX_POOL = 1000000.0
 LOTTERY_MIN = 1
 LOTTERY_MAX = 100
 ORGAN_DEFS: list[dict[str, Any]] = [
@@ -377,13 +378,15 @@ def buy_lottery_ticket(
         raise FxError(f"现金不足，购买彩票需要 {money(LOTTERY_TICKET_PRICE)}。")
 
     account.cash -= LOTTERY_TICKET_PRICE
-    pool += LOTTERY_POOL_INCREASE
+    pool = min(pool + LOTTERY_POOL_INCREASE, LOTTERY_MAX_POOL)
     rng = rng or random.Random()
     draw = rng.randint(LOTTERY_MIN, LOTTERY_MAX)
     won = draw == chosen
     payout = pool if won else 0.0
     if won:
         account.cash += pool
+        account.lottery_winnings += payout
+        account.lottery_win_count += 1
         pool = LOTTERY_BASE_POOL
 
     record = {
@@ -781,6 +784,8 @@ class Account:
     relief_today: int = 0
     relief_count: int = 0
     lottery_history: list[dict[str, Any]] = field(default_factory=list)
+    lottery_winnings: float = 0.0
+    lottery_win_count: int = 0
     margin_default: float = DEFAULT_MARGIN
     leverage_default: int = DEFAULT_LEVERAGE
     positions: list[Position] = field(default_factory=list)
@@ -820,6 +825,8 @@ class Account:
             "relief_today": self.relief_today,
             "relief_count": self.relief_count,
             "lottery_history": self.lottery_history,
+            "lottery_winnings": self.lottery_winnings,
+            "lottery_win_count": self.lottery_win_count,
             "margin_default": self.margin_default,
             "leverage_default": self.leverage_default,
             "positions": [position.to_dict() for position in self.positions],
@@ -829,6 +836,21 @@ class Account:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Account:
+        lottery_history = list(data.get("lottery_history") or [])
+        raw_winnings = data.get("lottery_winnings")
+        raw_win_count = data.get("lottery_win_count")
+        if raw_winnings is None:
+            lottery_winnings = sum(
+                float(item.get("payout") or 0)
+                for item in lottery_history
+                if item.get("won")
+            )
+        else:
+            lottery_winnings = float(raw_winnings)
+        if raw_win_count is None:
+            lottery_win_count = sum(1 for item in lottery_history if item.get("won"))
+        else:
+            lottery_win_count = int(raw_win_count)
         return cls(
             user_id=str(data.get("user_id") or ""),
             name=str(data.get("name") or ""),
@@ -850,7 +872,9 @@ class Account:
             relief_day=str(data.get("relief_day") or ""),
             relief_today=int(data.get("relief_today") or 0),
             relief_count=int(data.get("relief_count") or 0),
-            lottery_history=list(data.get("lottery_history") or []),
+            lottery_history=lottery_history,
+            lottery_winnings=lottery_winnings,
+            lottery_win_count=lottery_win_count,
             margin_default=max(
                 MIN_MARGIN, float(data.get("margin_default") or DEFAULT_MARGIN)
             ),

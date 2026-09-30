@@ -553,3 +553,63 @@ def render_lottery_ticket(
         fill=(190, 145, 150),
     )
     return _png_bytes(image)
+
+
+def render_lottery_leaderboard(entries: list[dict[str, Any]], pool: float) -> bytes:
+    """Render the cumulative lottery winnings leaderboard."""
+
+    height = 180 + max(1, len(entries)) * 38
+    image = Image.new("RGB", (760, height), (255, 255, 255))
+    draw = ImageDraw.Draw(image)
+    red = (210, 30, 45)
+    dark_red = (140, 18, 30)
+    gray = (105, 110, 120)
+    draw.rounded_rectangle((14, 14, 746, height - 14), radius=16, outline=red, width=3)
+    _text(draw, (36, 28), "彩票中奖排行", font=_font(26, True), fill=red)
+    _text(
+        draw,
+        (36, 66),
+        f"当前奖池：{money(pool)}",
+        font=_font(15),
+        fill=gray,
+    )
+    if not entries:
+        _text(draw, (36, 130), "暂无中奖记录", font=_font(18), fill=gray)
+        return _png_bytes(image)
+
+    _text(draw, (50, 112), "排名", font=_font(13), fill=gray)
+    _text(draw, (150, 112), "玩家", font=_font(13), fill=gray)
+    _text(draw, (430, 112), "累计中奖", font=_font(13), fill=gray)
+    _text(draw, (640, 112), "中奖次数", font=_font(13), fill=gray)
+    for index, item in enumerate(entries):
+        top = 142 + index * 38
+        draw.rounded_rectangle((24, top, 736, top + 32), radius=8, fill=(255, 245, 245))
+        _text(
+            draw,
+            (50, top + 6),
+            str(item.get("rank") or index + 1),
+            font=_font(15, True),
+            fill=dark_red,
+        )
+        _text(
+            draw,
+            (150, top + 6),
+            str(item.get("name") or "玩家"),
+            font=_font(15, True),
+            fill=(40, 40, 40),
+        )
+        _text(
+            draw,
+            (430, top + 6),
+            money(float(item.get("winnings") or 0)),
+            font=_font(15, True),
+            fill=red,
+        )
+        _text(
+            draw,
+            (640, top + 6),
+            str(int(item.get("wins") or 0)),
+            font=_font(14, True),
+            fill=gray,
+        )
+    return _png_bytes(image)

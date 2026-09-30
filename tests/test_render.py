@@ -14,6 +14,7 @@ from src.render import (  # noqa: E402
     render_chart,
     render_history,
     render_leaderboard,
+    render_lottery_leaderboard,
     render_lottery_ticket,
     render_market,
 )
@@ -34,6 +35,13 @@ def test_renderers_return_png_bytes() -> None:
                 {"rank": 1, "name": "甲", "pnl": 100.0, "equity": 10100.0},
                 {"rank": 2, "name": "乙", "pnl": -50.0, "equity": 9950.0},
             ]
+        ),
+        render_lottery_leaderboard(
+            [
+                {"rank": 1, "name": "甲", "winnings": 1000000.0, "wins": 2},
+                {"rank": 2, "name": "乙", "winnings": 200000.0, "wins": 1},
+            ],
+            1400000.0,
         ),
         render_lottery_ticket(
             {

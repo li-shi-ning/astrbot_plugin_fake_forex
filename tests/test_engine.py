@@ -26,6 +26,7 @@ from src.engine import (  # noqa: E402
     loan_daily_rate,
     normalize_pair,
     LOTTERY_BASE_POOL,
+    LOTTERY_MAX_POOL,
     loan_limit,
     open_position,
     organ_defs,
@@ -392,3 +393,10 @@ def test_lottery_ticket_loss_accumulates_and_win_resets_pool() -> None:
     assert account.cash == 9800.0 + 220000.0
     assert account.trading_pnl(market) == pnl_before
     assert account.lottery_history
+
+def test_lottery_pool_caps_at_one_million() -> None:
+    account = Account("u", "Tester", cash=10000.0)
+    result = buy_lottery_ticket(
+        account, 7, LOTTERY_MAX_POOL - 5000, FixedRng(8)
+    )
+    assert result["pool_after"] == LOTTERY_MAX_POOL

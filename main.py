@@ -15,6 +15,7 @@ from astrbot.api.star import Context, Star, StarTools, register
 try:
     from .src.engine import (
         LOTTERY_BASE_POOL,
+        LOTTERY_MAX_POOL,
         LOTTERY_POOL_INCREASE,
         LOTTERY_TICKET_PRICE,
         PAIR_IDS,
@@ -53,6 +54,7 @@ try:
         render_chart,
         render_history,
         render_leaderboard,
+        render_lottery_leaderboard,
         render_lottery_ticket,
         render_market,
         render_organs,
@@ -61,6 +63,7 @@ try:
 except ImportError:  # pragma: no cover - direct local import fallback
     from src.engine import (
         LOTTERY_BASE_POOL,
+        LOTTERY_MAX_POOL,
         LOTTERY_POOL_INCREASE,
         LOTTERY_TICKET_PRICE,
         PAIR_IDS,
@@ -98,6 +101,7 @@ except ImportError:  # pragma: no cover - direct local import fallback
         render_chart,
         render_history,
         render_leaderboard,
+        render_lottery_leaderboard,
         render_lottery_ticket,
         render_market,
         render_organs,
@@ -312,6 +316,14 @@ class FakeForexPlugin(Star):
     @filter.command("彩票奖池", alias={"奖池", "查看奖池"})
     async def lottery_pool_command(self, event: AstrMessageEvent):
         async for result in self._handle_command(event, "lottery_pool"):
+            yield result
+        event.stop_event()
+
+    @filter.command(
+        "彩票排行", alias={"中奖排行", "彩票排行榜", "中奖排行榜", "彩票榜"}
+    )
+    async def lottery_rank_command(self, event: AstrMessageEvent):
+        async for result in self._handle_command(event, "lottery_rank"):
             yield result
         event.stop_event()
 
@@ -563,7 +575,7 @@ class FakeForexPlugin(Star):
                     text=(
                         f"彩票系统\n"
                         f"基础奖池 {money(LOTTERY_BASE_POOL)}\n"
-                        f"当前奖池 {money(self.lottery_pool)}\n"
+                        f"当前奖池 {money(self.lottery_pool)} / 上限 {money(LOTTERY_MAX_POOL)}\n"
                         f"票价 {money(LOTTERY_TICKET_PRICE)}，数字 1-100\n"
                         f"每张彩票向奖池注入 {money(LOTTERY_POOL_INCREASE)}\n"
                         "买彩票 <数字> 立即开奖；中奖清空奖池，只保留基础奖池。"
@@ -576,6 +588,30 @@ class FakeForexPlugin(Star):
                 notes,
                 CommandOutcome(
                     text=f"当前彩票奖池：{money(self.lottery_pool)}",
+                    buttons=self._lottery_buttons(),
+                ),
+            )
+        if command == "lottery_rank":
+            entries: list[dict[str, Any]] = []
+            for players in self.accounts.values():
+                for player in players.values():
+                    if player.lottery_winnings <= 0:
+                        continue
+                    entries.append(
+                        {
+                            "name": player.name,
+                            "winnings": player.lottery_winnings,
+                            "wins": player.lottery_win_count,
+                        }
+                    )
+            entries.sort(key=lambda item: float(item["winnings"]), reverse=True)
+            for index, item in enumerate(entries, start=1):
+                item["rank"] = index
+            return self._with_notes(
+                notes,
+                CommandOutcome(
+                    text="彩票中奖排行（全服，含历史记录）",
+                    image=render_lottery_leaderboard(entries, self.lottery_pool),
                     buttons=self._lottery_buttons(),
                 ),
             )
@@ -683,6 +719,7 @@ class FakeForexPlugin(Star):
         return [
             ButtonSpec("fx_lottery_buy", "买彩票", "买彩票 "),
             ButtonSpec("fx_lottery_pool", "奖池", "彩票奖池"),
+            ButtonSpec("fx_lottery_rank", "中奖排行", "彩票排行"),
             ButtonSpec("fx_lottery_account", "账户", "外汇账户"),
             ButtonSpec("fx_lottery_help", "帮助", "外汇帮助"),
         ]
@@ -697,7 +734,7 @@ class FakeForexPlugin(Star):
             "外汇做空 水母水产 500 20\n"
             "外汇持仓 / 外汇平仓 编号\n"
             "外汇账户 / 外汇历史 / 外汇排行 / 破产申请\n"
-            "彩票菜单 / 买彩票 88 / 彩票奖池\n"
+            "彩票菜单 / 买彩票 88 / 彩票奖池 / 彩票排行\n"
             "外汇设置 保证金 500 / 外汇设置 杠杆 20\n"
             "外汇器官 / 外汇卖器官 心脏 / 外汇买器官 心脏\n"
             "外汇借款 10000 / 外汇还款 5000\n"
@@ -710,7 +747,7 @@ class FakeForexPlugin(Star):
             "贷款每 30 分钟按 3% 复利计息；"
             "基础额度 $200,000，每天额外 +$200,000；"
             "破产申请每天最多 3 次，且现金<=0 或净值<0 时才能申请；"
-            "彩票票价 $100，每张彩票向奖池注入 $10,000，中奖清空奖池。"
+            "彩票票价 $100，每张彩票向奖池注入 $10,000，奖池上限 $1,000,000，中奖清空奖池。"
         )
         return CommandOutcome(text=text, buttons=self._menu_buttons())
 
