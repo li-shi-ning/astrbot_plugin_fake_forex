@@ -210,3 +210,22 @@ def test_marketplace_limit_and_negative_price(tmp_path: Path) -> None:
         results = run(collect(plugin.market_list_command(owner)))
         assert results
         assert len(plugin.market_listings) == 5
+
+def test_marketplace_pagination_layout(tmp_path: Path) -> None:
+    with patch.object(plugin_main.StarTools, "get_data_dir", return_value=tmp_path):
+        plugin = plugin_main.FakeForexPlugin(context=SimpleNamespace(), config={"tick_seconds": 3600})
+    for index in range(1, 14):
+        plugin.market_listings[str(index)] = {
+            "id": str(index),
+            "name": f"商品{index}",
+            "price": float(index),
+            "seller_id": "other",
+            "seller_name": "别人",
+        }
+    account = plugin_main.Account("me", "我")
+    page_one = plugin._marketplace_buttons(account, 1)
+    page_two = plugin._marketplace_buttons(account, 2)
+    assert len(page_one) == 15
+    assert [item.label for item in page_one[-3:]] == ["上一页", "第 1/2 页", "下一页"]
+    assert len(page_two) == 4
+    assert [item.label for item in page_two[-3:]] == ["上一页", "第 2/2 页", "下一页"]

@@ -334,9 +334,15 @@ class FakeForexPlugin(Star):
             yield result
         event.stop_event()
 
-    @filter.command("市场菜单", alias={"市场", "集市", "市场帮助"})
+    @filter.command("市场菜单", alias={"市场", "市场帮助"})
     async def market_menu_command(self, event: AstrMessageEvent):
         async for result in self._handle_command(event, "market_menu"):
+            yield result
+        event.stop_event()
+
+    @filter.command("集市", alias={"市场集市", "查看集市"})
+    async def marketplace_command(self, event: AstrMessageEvent):
+        async for result in self._handle_command(event, "marketplace"):
             yield result
         event.stop_event()
 
@@ -653,15 +659,10 @@ class FakeForexPlugin(Star):
                 ),
             )
         if command == "market_menu":
-            listings = self._sorted_listings()
-            return self._with_notes(
-                notes,
-                CommandOutcome(
-                    text=f"集市：当前 {len(listings)} 件商品，每人最多上架 5 件。",
-                    image=render_marketplace(listings, account.name),
-                    buttons=self._marketplace_buttons(account),
-                ),
-            )
+            return self._with_notes(notes, self._market_menu_outcome(account))
+        if command == "marketplace":
+            page = self._page_arg(text)
+            return self._with_notes(notes, self._marketplace_outcome(account, page))
         if command == "market_list":
             name, price = self._parse_listing_args(text)
             mine = [
@@ -683,13 +684,12 @@ class FakeForexPlugin(Star):
                 "seller_name": account.name,
                 "created_at": time.time(),
             }
-            listings = self._sorted_listings()
             return self._with_notes(
                 notes,
-                CommandOutcome(
-                    text=f"已上架 #{listing_id} {name}，价格 {money(price)}。",
-                    image=render_marketplace(listings, account.name),
-                    buttons=self._marketplace_buttons(account),
+                self._marketplace_outcome(
+                    account,
+                    page=1,
+                    prefix=f"已上架 #{listing_id} {name}，价格 {money(price)}。",
                 ),
             )
         if command == "market_cancel":
@@ -703,13 +703,12 @@ class FakeForexPlugin(Star):
             ):
                 raise FxError("只能下架自己的商品。")
             del self.market_listings[listing_id]
-            listings = self._sorted_listings()
             return self._with_notes(
                 notes,
-                CommandOutcome(
-                    text=f"已下架 #{listing_id} {listing.get('name')}。",
-                    image=render_marketplace(listings, account.name),
-                    buttons=self._marketplace_buttons(account),
+                self._marketplace_outcome(
+                    account,
+                    page=1,
+                    prefix=f"已下架 #{listing_id} {listing.get('name')}。",
                 ),
             )
         if command == "market_buy":
@@ -866,16 +865,48 @@ class FakeForexPlugin(Star):
             key=lambda item: int(item.get("id") or 0),
         )
 
-    def _marketplace_buttons(self, account: Account) -> list[ButtonSpec]:
-        buttons: list[ButtonSpec] = [
+    def _market_menu_outcome(self, account: Account) -> CommandOutcome:
+        return CommandOutcome(
+            text=(
+                "市场菜单\n"
+                "集市：查看别人上架的商品\n"
+                "上架 <商品名> <价格>：上架商品，每人最多 5 件\n"
+                "背包：查看自己买到的物品"
+            ),
+            buttons=self._market_menu_buttons(),
+        )
+
+    def _market_menu_buttons(self) -> list[ButtonSpec]:
+        return [
+            ButtonSpec("fx_market_go", "集市", "集市 1"),
             ButtonSpec("fx_market_list", "上架", "上架 "),
             ButtonSpec("fx_market_backpack", "背包", "背包"),
             ButtonSpec("fx_market_account", "账户", "外汇账户"),
             ButtonSpec("fx_market_help", "帮助", "市场帮助"),
         ]
-        for item in self._sorted_listings():
-            if len(buttons) >= 25:
-                break
+
+    def _marketplace_outcome(
+        self, account: Account, page: int = 1, prefix: str = ""
+    ) -> CommandOutcome:
+        listings = self._sorted_listings()
+        total_pages = max(1, (len(listings) + 11) // 12)
+        page = max(1, min(page, total_pages))
+        page_text = (
+            f"{prefix}\n" if prefix else ""
+        ) + f"集市 第 {page}/{total_pages} 页，共 {len(listings)} 件商品。"
+        return CommandOutcome(
+            text=page_text,
+            image=render_marketplace(listings, account.name),
+            buttons=self._marketplace_buttons(account, page),
+        )
+
+    def _marketplace_buttons(self, account: Account, page: int = 1) -> list[ButtonSpec]:
+        listings = self._sorted_listings()
+        total_pages = max(1, (len(listings) + 11) // 12)
+        page = max(1, min(page, total_pages))
+        start_index = (page - 1) * 12
+        buttons: list[ButtonSpec] = []
+        for item in listings[start_index : start_index + 12]:
             listing_id = str(item.get("id") or "")
             price = float(item.get("price") or 0)
             label = f"{str(item.get('name') or '商品')[:6]} ${price:.0f}"
@@ -896,7 +927,26 @@ class FakeForexPlugin(Star):
                         f"购买 {listing_id}",
                     )
                 )
+        prev_page = max(1, page - 1)
+        next_page = min(total_pages, page + 1)
+        buttons.extend(
+            [
+                ButtonSpec("fx_market_prev", "上一页", f"集市 {prev_page}"),
+                ButtonSpec(
+                    "fx_market_page",
+                    f"第 {page}/{total_pages} 页",
+                    f"集市 {page}",
+                ),
+                ButtonSpec("fx_market_next", "下一页", f"集市 {next_page}"),
+            ]
+        )
         return buttons
+
+    def _page_arg(self, text: str) -> int:
+        match = re.search(r"\d+", text)
+        if match is None:
+            return 1
+        return max(1, int(match.group(0)))
 
     def _backpack_buttons(self) -> list[ButtonSpec]:
         return [
