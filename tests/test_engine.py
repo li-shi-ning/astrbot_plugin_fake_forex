@@ -12,6 +12,7 @@ from src import engine as engine_module  # noqa: E402
 from src.engine import (  # noqa: E402
     Account,
     FxError,
+    apply_bankruptcy,
     INSTRUMENT_DEFS,
     Market,
     PAIR_MAP,
@@ -197,7 +198,7 @@ def test_spread_is_applied_to_open_and_close() -> None:
     finally:
         PAIR_MAP["SMSC"]["spread"] = old_spread
 
-def test_super_shock_jumps_price_and_sets_regime() -> None:
+def test_super_shock_jumps_price_without_persistent_trend() -> None:
     market = seeded_market()
     series = market.pairs["SMSC"]
     before = series.price
@@ -210,8 +211,8 @@ def test_super_shock_jumps_price_and_sets_regime() -> None:
 
     move = abs(series.price / before - 1)
     assert move >= engine_module.SUPER_SHOCK_MIN
-    assert series.regime != 0
-    assert series.regime_ticks > 0
+    assert series.regime == 0.0
+    assert series.regime_ticks == 0
 
 def test_trade_fee_and_liquidation_penalty() -> None:
     market = seeded_market()
@@ -330,3 +331,25 @@ def test_daily_extra_loan_ceiling() -> None:
     borrow(account, 200000, "2026-01-02")
     assert loan_limit(account) == 600000
     assert account.debt == 410000
+
+def test_bankruptcy_relief_is_daily_and_leaderboard_neutral() -> None:
+    market = seeded_market()
+    account = Account("u", "Tester", cash=0.0, debt=100000.0)
+    pnl_before = account.trading_pnl(market)
+
+    result = apply_bankruptcy(account, "2026-01-01")
+
+    assert result["cash"] == 10000.0
+    assert account.cash == 10000.0
+    assert account.debt == 50000.0
+    assert account.trading_pnl(market) == pnl_before
+
+    try:
+        apply_bankruptcy(account, "2026-01-01")
+    except FxError as exc:
+        assert "今天已经申请过" in str(exc)
+    else:  # pragma: no cover - guard against regression
+        raise AssertionError("bankruptcy relief should be once per day")
+
+    apply_bankruptcy(account, "2026-01-02")
+    assert account.debt == 25000.0

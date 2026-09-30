@@ -301,6 +301,34 @@ def buy_organ(account: Account, organ_id: str) -> dict[str, Any]:
     }
 
 
+def apply_bankruptcy(account: Account, day: str) -> dict[str, Any]:
+    """Apply the once-per-day bankruptcy relief.
+
+    This deliberately does not touch ``history`` so the trading P/L
+    leaderboard is unaffected by relief money.
+    """
+
+    if account.relief_day == day:
+        raise FxError("今天已经申请过破产救济了。")
+    old_debt = account.debt
+    account.debt = round(account.debt * 0.5, 2)
+    if account.debt <= 0:
+        account.debt = 0.0
+        account.loan_principal = 0.0
+        account.loan_rate = 0.0
+        account.loan_last_ts = 0.0
+        account.loan_ticks = 0
+    account.cash = 10000.0
+    account.relief_day = day
+    account.relief_count += 1
+    return {
+        "old_debt": old_debt,
+        "remaining_debt": account.debt,
+        "cash": account.cash,
+        "count": account.relief_count,
+    }
+
+
 def loan_limit(account: Account) -> float:
     """Return the current total loan ceiling."""
 
@@ -541,33 +569,23 @@ def tick_market(
     rng = rng or random.Random()
     for index, (_pair_id, series) in enumerate(list(market.pairs.items())):
         open_price = series.price
-        regime = series.regime if series.regime_ticks > 0 else 0.0
 
         if rng.random() < SUPER_SHOCK_CHANCE:
             direction = 1 if rng.random() < 0.5 else -1
             magnitude = rng.uniform(SUPER_SHOCK_MIN, SUPER_SHOCK_MAX)
             close = max(open_price * 0.05, open_price * (1 + direction * magnitude))
-            series.regime = direction * rng.uniform(0.0005, 0.004)
-            series.regime_ticks = rng.randint(REGIME_TICKS_MIN, REGIME_TICKS_MAX)
         else:
             drift = math.sin((market.tick + 1) / 8.67 + index * 2) * 0.00036
             shock = (rng.random() - 0.5) * 0.019 if rng.random() < 0.018 else 0.0
             close = max(
                 open_price * 0.5,
-                open_price
-                * (1 + drift + regime + (rng.random() - 0.5) * 0.0042 + shock),
+                open_price * (1 + drift + (rng.random() - 0.5) * 0.0042 + shock),
             )
-            if series.regime_ticks > 0:
-                series.regime_ticks -= 1
-            else:
-                series.regime = 0.0
 
         if rng.random() < NEWS_CHANCE:
             news_direction = 1 if rng.random() < 0.5 else -1
             news_move = rng.uniform(NEWS_MIN, NEWS_MAX)
             close = max(close * 0.1, close * (1 + news_direction * news_move))
-            series.regime = news_direction * rng.uniform(0.0002, 0.002)
-            series.regime_ticks = max(series.regime_ticks, rng.randint(20, 80))
             name = PAIR_MAP.get(_pair_id, {}).get("name", _pair_id)
             market.news.insert(
                 0,
@@ -582,6 +600,8 @@ def tick_market(
                 },
             )
             del market.news[20:]
+        series.regime = 0.0
+        series.regime_ticks = 0
 
         wick = open_price * (rng.random() * 0.0015 + 0.0002)
         series.candles.append(
@@ -686,6 +706,8 @@ class Account:
     loan_day: str = ""
     organ_sold: list[str] = field(default_factory=list)
     organ_history: list[dict[str, Any]] = field(default_factory=list)
+    relief_day: str = ""
+    relief_count: int = 0
     margin_default: float = DEFAULT_MARGIN
     leverage_default: int = DEFAULT_LEVERAGE
     positions: list[Position] = field(default_factory=list)
@@ -721,6 +743,8 @@ class Account:
             "loan_day": self.loan_day,
             "organ_sold": self.organ_sold,
             "organ_history": self.organ_history,
+            "relief_day": self.relief_day,
+            "relief_count": self.relief_count,
             "margin_default": self.margin_default,
             "leverage_default": self.leverage_default,
             "positions": [position.to_dict() for position in self.positions],
@@ -748,6 +772,8 @@ class Account:
                 or [str(key) for key in dict(data.get("organ_sold_day") or {}).keys()]
             ),
             organ_history=list(data.get("organ_history") or []),
+            relief_day=str(data.get("relief_day") or ""),
+            relief_count=int(data.get("relief_count") or 0),
             margin_default=max(
                 MIN_MARGIN, float(data.get("margin_default") or DEFAULT_MARGIN)
             ),

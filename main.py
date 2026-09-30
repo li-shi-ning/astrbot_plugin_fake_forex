@@ -20,6 +20,7 @@ try:
         FxError,
         Market,
         advance_market,
+        apply_bankruptcy,
         borrow,
         buy_organ,
         close_position,
@@ -60,6 +61,7 @@ except ImportError:  # pragma: no cover - direct local import fallback
         FxError,
         Market,
         advance_market,
+        apply_bankruptcy,
         borrow,
         buy_organ,
         close_position,
@@ -277,6 +279,12 @@ class FakeForexPlugin(Star):
             yield result
         event.stop_event()
 
+    @filter.command("破产申请", alias={"申请破产", "破产救济", "救济申请"})
+    async def bankruptcy_command(self, event: AstrMessageEvent):
+        async for result in self._handle_command(event, "bankruptcy"):
+            yield result
+        event.stop_event()
+
     @filter.command("外汇卖器官", alias={"卖器官", "出售器官", "器官出售"})
     async def sell_organ_command(self, event: AstrMessageEvent):
         async for result in self._handle_command(event, "sell_organ"):
@@ -482,11 +490,14 @@ class FakeForexPlugin(Star):
         if command == "rank":
             entries: list[dict[str, Any]] = []
             for player in self.accounts.get(group_id, {}).values():
+                realized = sum(float(item.get("pnl") or 0) for item in player.history)
+                floating = player.floating_pnl(self.market)
                 entries.append(
                     {
                         "name": player.name,
-                        "pnl": player.trading_pnl(self.market),
-                        "equity": player.equity(self.market),
+                        "realized": realized,
+                        "floating": floating,
+                        "pnl": realized + floating,
                     }
                 )
             entries.sort(key=lambda item: float(item["pnl"]), reverse=True)
@@ -497,6 +508,20 @@ class FakeForexPlugin(Star):
                 CommandOutcome(
                     text="群友盈亏排行",
                     image=render_leaderboard(entries),
+                    buttons=self._account_buttons(),
+                ),
+            )
+        if command == "bankruptcy":
+            result = apply_bankruptcy(account, day)
+            return self._with_notes(
+                notes,
+                CommandOutcome(
+                    text=(
+                        f"破产救济已到账：现金恢复到 {money(result['cash'])}，"
+                        f"债务从 {money(result['old_debt'])} 降到 "
+                        f"{money(result['remaining_debt'])}。\n"
+                        "本救济不计入交易盈亏排行榜。"
+                    ),
                     buttons=self._account_buttons(),
                 ),
             )
@@ -579,7 +604,7 @@ class FakeForexPlugin(Star):
             "外汇做多 水母水产 500 20\n"
             "外汇做空 水母水产 500 20\n"
             "外汇持仓 / 外汇平仓 编号\n"
-            "外汇账户 / 外汇历史 / 外汇排行\n"
+            "外汇账户 / 外汇历史 / 外汇排行 / 破产申请\n"
             "外汇设置 保证金 500 / 外汇设置 杠杆 20\n"
             "外汇器官 / 外汇卖器官 心脏 / 外汇买器官 心脏\n"
             "外汇借款 10000 / 外汇还款 5000\n"
@@ -653,6 +678,7 @@ class FakeForexPlugin(Star):
             ButtonSpec("fx_menu_organs", "器官", "外汇器官"),
             ButtonSpec("fx_menu_borrow", "借款", "外汇借款 10000"),
             ButtonSpec("fx_menu_repay", "还款", "外汇还款 5000"),
+            ButtonSpec("fx_menu_bankruptcy", "破产申请", "破产申请"),
             ButtonSpec("fx_menu_help", "帮助", "外汇帮助"),
         ]
 
@@ -733,6 +759,7 @@ class FakeForexPlugin(Star):
             ButtonSpec("fx_account_positions", "持仓", "外汇持仓"),
             ButtonSpec("fx_account_history", "历史", "外汇历史"),
             ButtonSpec("fx_account_rank", "排行", "外汇排行"),
+            ButtonSpec("fx_account_bankruptcy", "破产申请", "破产申请"),
             ButtonSpec("fx_account_organs", "器官", "外汇器官"),
             ButtonSpec("fx_account_help", "帮助", "外汇帮助"),
         ]

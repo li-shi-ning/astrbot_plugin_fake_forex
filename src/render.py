@@ -421,11 +421,14 @@ def render_leaderboard(entries: list[dict[str, Any]]) -> bytes:
 
     _text(draw, (36, 104), "排名", font=_font(13), fill=MUTED)
     _text(draw, (150, 104), "玩家", font=_font(13), fill=MUTED)
-    _text(draw, (520, 104), "交易盈亏", font=_font(13), fill=MUTED)
-    _text(draw, (760, 104), "净值", font=_font(13), fill=MUTED)
+    _text(draw, (420, 104), "总盈亏", font=_font(13), fill=MUTED)
+    _text(draw, (620, 104), "已实现", font=_font(13), fill=MUTED)
+    _text(draw, (790, 104), "浮动", font=_font(13), fill=MUTED)
     for index, item in enumerate(entries):
         top = 132 + index * 38
         pnl = float(item.get("pnl") or 0)
+        realized = float(item.get("realized") or 0)
+        floating = float(item.get("floating") or 0)
         color = GREEN if pnl >= 0 else RED
         draw.rounded_rectangle((24, top, WIDTH - 24, top + 32), radius=8, fill=PANEL)
         _text(
@@ -442,12 +445,19 @@ def render_leaderboard(entries: list[dict[str, Any]]) -> bytes:
             font=_font(15, True),
             fill=TEXT,
         )
-        _text(draw, (520, top + 6), signed_money(pnl), font=_font(15, True), fill=color)
+        _text(draw, (420, top + 6), signed_money(pnl), font=_font(15, True), fill=color)
         _text(
             draw,
-            (760, top + 6),
-            money(float(item.get("equity") or 0)),
+            (620, top + 6),
+            signed_money(realized),
             font=_font(14),
-            fill=TEXT,
+            fill=GREEN if realized >= 0 else RED,
+        )
+        _text(
+            draw,
+            (790, top + 6),
+            signed_money(floating),
+            font=_font(14),
+            fill=GREEN if floating >= 0 else RED,
         )
     return _png_bytes(image)
