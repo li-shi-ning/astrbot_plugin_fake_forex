@@ -128,6 +128,11 @@ NEWS_CHANCE = 0.0015
 NEWS_MIN = 0.05
 NEWS_MAX = 0.25
 DAILY_EXTRA_LOAN = 200000.0
+LOTTERY_BASE_POOL = 200000.0
+LOTTERY_TICKET_PRICE = 100.0
+LOTTERY_POOL_INCREASE = LOTTERY_TICKET_PRICE * 1000
+LOTTERY_MIN = 1
+LOTTERY_MAX = 100
 ORGAN_DEFS: list[dict[str, Any]] = [
     {"id": "heart", "name": "心脏", "price": 80000.0},
     {"id": "brain", "name": "大脑", "price": 75000.0},
@@ -341,6 +346,57 @@ def apply_bankruptcy(account: Account, market: Market, day: str) -> dict[str, An
         "today": account.relief_today,
         "remaining_today": 3 - account.relief_today,
     }
+
+
+def buy_lottery_ticket(
+    account: Account,
+    chosen_number: int,
+    pool: float,
+    rng: random.Random | None = None,
+) -> dict[str, Any]:
+    """Buy one lottery ticket, draw immediately, and settle the pool.
+
+    The caller must already hold the lottery lock so two winners cannot
+    settle the same pool concurrently.
+
+    Returns:
+        Ticket result containing chosen number, draw, win flag, payout, and
+        the updated pool.
+
+    Raises:
+        FxError: If the number is invalid or cash is insufficient.
+    """
+
+    try:
+        chosen = int(chosen_number)
+    except (TypeError, ValueError) as exc:
+        raise FxError("彩票数字必须是 1-100 的整数。") from exc
+    if not LOTTERY_MIN <= chosen <= LOTTERY_MAX:
+        raise FxError("彩票数字必须在 1-100 之间。")
+    if account.cash < LOTTERY_TICKET_PRICE:
+        raise FxError(f"现金不足，购买彩票需要 {money(LOTTERY_TICKET_PRICE)}。")
+
+    account.cash -= LOTTERY_TICKET_PRICE
+    pool += LOTTERY_POOL_INCREASE
+    rng = rng or random.Random()
+    draw = rng.randint(LOTTERY_MIN, LOTTERY_MAX)
+    won = draw == chosen
+    payout = pool if won else 0.0
+    if won:
+        account.cash += pool
+        pool = LOTTERY_BASE_POOL
+
+    record = {
+        "chosen": chosen,
+        "draw": draw,
+        "won": won,
+        "payout": payout,
+        "pool_after": pool,
+        "time": time.time(),
+    }
+    account.lottery_history.insert(0, record)
+    del account.lottery_history[20:]
+    return record
 
 
 def loan_limit(account: Account) -> float:
@@ -724,6 +780,7 @@ class Account:
     relief_day: str = ""
     relief_today: int = 0
     relief_count: int = 0
+    lottery_history: list[dict[str, Any]] = field(default_factory=list)
     margin_default: float = DEFAULT_MARGIN
     leverage_default: int = DEFAULT_LEVERAGE
     positions: list[Position] = field(default_factory=list)
@@ -762,6 +819,7 @@ class Account:
             "relief_day": self.relief_day,
             "relief_today": self.relief_today,
             "relief_count": self.relief_count,
+            "lottery_history": self.lottery_history,
             "margin_default": self.margin_default,
             "leverage_default": self.leverage_default,
             "positions": [position.to_dict() for position in self.positions],
@@ -792,6 +850,7 @@ class Account:
             relief_day=str(data.get("relief_day") or ""),
             relief_today=int(data.get("relief_today") or 0),
             relief_count=int(data.get("relief_count") or 0),
+            lottery_history=list(data.get("lottery_history") or []),
             margin_default=max(
                 MIN_MARGIN, float(data.get("margin_default") or DEFAULT_MARGIN)
             ),

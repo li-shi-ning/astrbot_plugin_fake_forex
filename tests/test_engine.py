@@ -19,11 +19,13 @@ from src.engine import (  # noqa: E402
     accrue_interest,
     advance_market,
     borrow,
+    buy_lottery_ticket,
     buy_organ,
     check_liquidations,
     close_position,
     loan_daily_rate,
     normalize_pair,
+    LOTTERY_BASE_POOL,
     loan_limit,
     open_position,
     organ_defs,
@@ -362,3 +364,31 @@ def test_bankruptcy_relief_conditions_and_daily_limit() -> None:
         assert "没有达到破产条件" in str(exc)
     else:  # pragma: no cover - guard against regression
         raise AssertionError("healthy account should not get bankruptcy relief")
+
+class FixedRng:
+    def __init__(self, value: int) -> None:
+        self.value = value
+
+    def randint(self, _minimum: int, _maximum: int) -> int:
+        return self.value
+
+
+def test_lottery_ticket_loss_accumulates_and_win_resets_pool() -> None:
+    account = Account("u", "Tester", cash=10000.0)
+    market = seeded_market()
+    pnl_before = account.trading_pnl(market)
+    pool = LOTTERY_BASE_POOL
+
+    loss = buy_lottery_ticket(account, 7, pool, FixedRng(8))
+    pool = float(loss["pool_after"])
+    assert loss["won"] is False
+    assert account.cash == 9900.0
+    assert pool == LOTTERY_BASE_POOL + 100000
+
+    win = buy_lottery_ticket(account, 8, pool, FixedRng(8))
+    assert win["won"] is True
+    assert win["payout"] == pool + 100000
+    assert win["pool_after"] == LOTTERY_BASE_POOL
+    assert account.cash == 9800.0 + 400000.0
+    assert account.trading_pnl(market) == pnl_before
+    assert account.lottery_history

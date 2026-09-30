@@ -30,12 +30,22 @@ YELLOW = (250, 204, 21)
 CJK_FONT_CANDIDATES = [
     "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
     "/usr/share/fonts/opentype/noto/NotoSerifCJK-Regular.ttc",
+    "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
     "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+    "/usr/share/fonts/truetype/arphic/uming.ttc",
+    "/usr/share/fonts/truetype/arphic/ukai.ttc",
+    "/AstrBot/data/font.ttf",
+    "/root/astrbot/data/font.ttf",
 ]
 CJK_BOLD_CANDIDATES = [
     "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
     "/usr/share/fonts/opentype/noto/NotoSerifCJK-Bold.ttc",
+    "/usr/share/fonts/truetype/noto/NotoSansCJK-Bold.ttc",
     "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+    "/usr/share/fonts/truetype/arphic/uming.ttc",
+    "/usr/share/fonts/truetype/arphic/ukai.ttc",
+    "/AstrBot/data/font.ttf",
+    "/root/astrbot/data/font.ttf",
 ]
 FONT_CANDIDATES = [
     *CJK_FONT_CANDIDATES,
@@ -55,14 +65,28 @@ def pair_change(market: Market, pair_id: str) -> float:
     return market.pairs[pair_id].change_percent()
 
 
+def _load_font(path: str, size: int) -> ImageFont.ImageFont | None:
+    """Try loading a font, including CJK collection indexes."""
+
+    for index in (2, 0, 1, 3, 4):
+        try:
+            return ImageFont.truetype(path, size, index=index)
+        except (OSError, ValueError):
+            continue
+    try:
+        return ImageFont.truetype(path, size)
+    except OSError:
+        return None
+
+
 def _font(size: int, bold: bool = False) -> ImageFont.ImageFont:
     candidates = FONT_BOLD_CANDIDATES if bold else FONT_CANDIDATES
     for candidate in candidates:
-        if Path(candidate).exists():
-            try:
-                return ImageFont.truetype(candidate, size)
-            except OSError:
-                continue
+        if not Path(candidate).exists():
+            continue
+        font = _load_font(candidate, size)
+        if font is not None:
+            return font
     return ImageFont.load_default()
 
 
@@ -460,4 +484,72 @@ def render_leaderboard(entries: list[dict[str, Any]]) -> bytes:
             font=_font(14),
             fill=GREEN if floating >= 0 else RED,
         )
+    return _png_bytes(image)
+
+
+def render_lottery_ticket(
+    result: dict[str, Any], account_name: str, pool: float
+) -> bytes:
+    """Render a lottery ticket with the chosen and drawn numbers."""
+
+    image = Image.new("RGB", (760, 360), (255, 255, 255))
+    draw = ImageDraw.Draw(image)
+    red = (210, 30, 45)
+    dark_red = (140, 18, 30)
+    gray = (105, 110, 120)
+    draw.rounded_rectangle((14, 14, 746, 346), radius=18, outline=red, width=4)
+    draw.rounded_rectangle((26, 26, 734, 110), radius=12, fill=red)
+    _text(draw, (48, 38), "虚拟彩票", font=_font(28, True), fill=(255, 255, 255))
+    _text(
+        draw,
+        (48, 78),
+        f"玩家：{account_name}",
+        font=_font(15),
+        fill=(255, 235, 235),
+    )
+    _text(
+        draw,
+        (WIDTH - 300, 80),
+        f"奖池：{money(pool)}",
+        font=_font(16, True),
+        fill=(255, 235, 235),
+    )
+
+    chosen = int(result.get("chosen") or 0)
+    drawn = int(result.get("draw") or 0)
+    won = bool(result.get("won"))
+    payout = float(result.get("payout") or 0)
+
+    _text(draw, (70, 142), "你选", font=_font(18), fill=gray)
+    _text(draw, (70, 178), f"{chosen:02d}", font=_font(64, True), fill=dark_red)
+    _text(draw, (330, 142), "开出", font=_font(18), fill=gray)
+    _text(draw, (330, 178), f"{drawn:02d}", font=_font(64, True), fill=dark_red)
+
+    if won:
+        _text(draw, (580, 150), "中奖", font=_font(48, True), fill=red)
+        _text(
+            draw,
+            (560, 210),
+            f"+{money(payout)}",
+            font=_font(20, True),
+            fill=red,
+        )
+    else:
+        _text(draw, (580, 150), "未中", font=_font(48, True), fill=gray)
+        _text(draw, (560, 210), "-$100", font=_font(20, True), fill=gray)
+
+    _text(
+        draw,
+        (48, 290),
+        f"开奖后奖池：{money(float(result.get('pool_after') or 0))}",
+        font=_font(16),
+        fill=gray,
+    )
+    _text(
+        draw,
+        (560, 310),
+        "SIMULATED",
+        font=_font(13, True),
+        fill=(190, 145, 150),
+    )
     return _png_bytes(image)

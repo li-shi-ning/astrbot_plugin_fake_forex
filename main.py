@@ -14,6 +14,9 @@ from astrbot.api.star import Context, Star, StarTools, register
 
 try:
     from .src.engine import (
+        LOTTERY_BASE_POOL,
+        LOTTERY_POOL_INCREASE,
+        LOTTERY_TICKET_PRICE,
         PAIR_IDS,
         PAIR_MAP,
         Account,
@@ -22,6 +25,7 @@ try:
         advance_market,
         apply_bankruptcy,
         borrow,
+        buy_lottery_ticket,
         buy_organ,
         close_position,
         instrument_defs,
@@ -49,12 +53,16 @@ try:
         render_chart,
         render_history,
         render_leaderboard,
+        render_lottery_ticket,
         render_market,
         render_organs,
     )
     from .src.storage import FxStore
 except ImportError:  # pragma: no cover - direct local import fallback
     from src.engine import (
+        LOTTERY_BASE_POOL,
+        LOTTERY_POOL_INCREASE,
+        LOTTERY_TICKET_PRICE,
         PAIR_IDS,
         PAIR_MAP,
         Account,
@@ -63,6 +71,7 @@ except ImportError:  # pragma: no cover - direct local import fallback
         advance_market,
         apply_bankruptcy,
         borrow,
+        buy_lottery_ticket,
         buy_organ,
         close_position,
         instrument_defs,
@@ -89,6 +98,7 @@ except ImportError:  # pragma: no cover - direct local import fallback
         render_chart,
         render_history,
         render_leaderboard,
+        render_lottery_ticket,
         render_market,
         render_organs,
     )
@@ -129,8 +139,10 @@ class FakeForexPlugin(Star):
         data_dir.mkdir(parents=True, exist_ok=True)
         self.store = FxStore(data_dir / STATE_FILENAME)
         self.market = Market.new()
+        self.lottery_pool = LOTTERY_BASE_POOL
         self.accounts: dict[str, dict[str, Account]] = {}
         self.lock = asyncio.Lock()
+        self.lottery_lock = asyncio.Lock()
 
     async def initialize(self) -> None:
         """Load the global market and per-group accounts."""
@@ -282,6 +294,24 @@ class FakeForexPlugin(Star):
     @filter.command("破产申请", alias={"申请破产", "破产救济", "救济申请"})
     async def bankruptcy_command(self, event: AstrMessageEvent):
         async for result in self._handle_command(event, "bankruptcy"):
+            yield result
+        event.stop_event()
+
+    @filter.command("彩票菜单", alias={"彩票", "彩票帮助", "虚拟彩票"})
+    async def lottery_menu_command(self, event: AstrMessageEvent):
+        async for result in self._handle_command(event, "lottery_menu"):
+            yield result
+        event.stop_event()
+
+    @filter.command("买彩票", alias={"购买彩票", "彩票购买", "下注彩票"})
+    async def lottery_buy_command(self, event: AstrMessageEvent):
+        async for result in self._handle_command(event, "lottery_buy"):
+            yield result
+        event.stop_event()
+
+    @filter.command("彩票奖池", alias={"奖池", "查看奖池"})
+    async def lottery_pool_command(self, event: AstrMessageEvent):
+        async for result in self._handle_command(event, "lottery_pool"):
             yield result
         event.stop_event()
 
@@ -526,6 +556,59 @@ class FakeForexPlugin(Star):
                     buttons=self._account_buttons(),
                 ),
             )
+        if command == "lottery_menu":
+            return self._with_notes(
+                notes,
+                CommandOutcome(
+                    text=(
+                        f"彩票系统\n"
+                        f"基础奖池 {money(LOTTERY_BASE_POOL)}\n"
+                        f"当前奖池 {money(self.lottery_pool)}\n"
+                        f"票价 {money(LOTTERY_TICKET_PRICE)}，数字 1-100\n"
+                        f"每张彩票向奖池注入 {money(LOTTERY_POOL_INCREASE)}\n"
+                        "买彩票 <数字> 立即开奖；中奖清空奖池，只保留基础奖池。"
+                    ),
+                    buttons=self._lottery_buttons(),
+                ),
+            )
+        if command == "lottery_pool":
+            return self._with_notes(
+                notes,
+                CommandOutcome(
+                    text=f"当前彩票奖池：{money(self.lottery_pool)}",
+                    buttons=self._lottery_buttons(),
+                ),
+            )
+        if command == "lottery_buy":
+            match = re.search(r"\d+", text)
+            if match is None:
+                raise FxError("请带上 1-100 的数字，例如：买彩票 88。")
+            number = int(match.group(0))
+            async with self.lottery_lock:
+                result = buy_lottery_ticket(account, number, self.lottery_pool)
+                self.lottery_pool = float(result["pool_after"])
+            if result["won"]:
+                result_text = (
+                    f"彩票中奖！你选 {result['chosen']}，开出 {result['draw']}，"
+                    f"赢得 {money(result['payout'])}。奖池已重置为 "
+                    f"{money(self.lottery_pool)}。"
+                )
+            else:
+                result_text = (
+                    f"未中奖。你选 {result['chosen']}，开出 {result['draw']}，"
+                    f"损失 {money(LOTTERY_TICKET_PRICE)}。当前奖池 "
+                    f"{money(self.lottery_pool)}。"
+                )
+            return self._with_notes(
+                notes,
+                CommandOutcome(
+                    text=result_text,
+                    image=render_lottery_ticket(
+                        result, account.name, self.lottery_pool
+                    ),
+                    buttons=self._lottery_buttons(),
+                ),
+            )
         if command in {"sell_organ", "buy_organ"}:
             organ_id = normalize_organ(text)
             if organ_id is None:
@@ -596,6 +679,14 @@ class FakeForexPlugin(Star):
         buttons.append(ButtonSpec("fx_organ_help", "帮助", "外汇帮助"))
         return buttons
 
+    def _lottery_buttons(self) -> list[ButtonSpec]:
+        return [
+            ButtonSpec("fx_lottery_buy", "买彩票", "买彩票 "),
+            ButtonSpec("fx_lottery_pool", "奖池", "彩票奖池"),
+            ButtonSpec("fx_lottery_account", "账户", "外汇账户"),
+            ButtonSpec("fx_lottery_help", "帮助", "外汇帮助"),
+        ]
+
     def _menu_outcome(self) -> CommandOutcome:
         text = (
             "虚拟外汇\n"
@@ -606,6 +697,7 @@ class FakeForexPlugin(Star):
             "外汇做空 水母水产 500 20\n"
             "外汇持仓 / 外汇平仓 编号\n"
             "外汇账户 / 外汇历史 / 外汇排行 / 破产申请\n"
+            "彩票菜单 / 买彩票 88 / 彩票奖池\n"
             "外汇设置 保证金 500 / 外汇设置 杠杆 20\n"
             "外汇器官 / 外汇卖器官 心脏 / 外汇买器官 心脏\n"
             "外汇借款 10000 / 外汇还款 5000\n"
@@ -617,7 +709,8 @@ class FakeForexPlugin(Star):
             "爆仓额外收 1% 名义仓位罚金；"
             "贷款每 30 分钟按 3% 复利计息；"
             "基础额度 $200,000，每天额外 +$200,000；"
-            "破产申请每天最多 3 次，且现金<=0 或净值<0 时才能申请。"
+            "破产申请每天最多 3 次，且现金<=0 或净值<0 时才能申请；"
+            "彩票票价 $100，每张彩票向奖池注入 $100,000，中奖清空奖池。"
         )
         return CommandOutcome(text=text, buttons=self._menu_buttons())
 
@@ -681,6 +774,7 @@ class FakeForexPlugin(Star):
             ButtonSpec("fx_menu_borrow", "借款", "外汇借款 10000"),
             ButtonSpec("fx_menu_repay", "还款", "外汇还款 5000"),
             ButtonSpec("fx_menu_bankruptcy", "破产申请", "破产申请"),
+            ButtonSpec("fx_menu_lottery", "彩票", "彩票菜单"),
             ButtonSpec("fx_menu_help", "帮助", "外汇帮助"),
         ]
 
@@ -762,6 +856,7 @@ class FakeForexPlugin(Star):
             ButtonSpec("fx_account_history", "历史", "外汇历史"),
             ButtonSpec("fx_account_rank", "排行", "外汇排行"),
             ButtonSpec("fx_account_bankruptcy", "破产申请", "破产申请"),
+            ButtonSpec("fx_account_lottery", "彩票", "彩票菜单"),
             ButtonSpec("fx_account_organs", "器官", "外汇器官"),
             ButtonSpec("fx_account_help", "帮助", "外汇帮助"),
         ]
@@ -807,6 +902,7 @@ class FakeForexPlugin(Star):
         await self.store.save(
             {
                 "market": self.market.to_dict(),
+                "lottery_pool": self.lottery_pool,
                 "instruments": instrument_defs(),
                 "groups": {
                     group_id: {

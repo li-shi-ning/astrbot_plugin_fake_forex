@@ -14,6 +14,7 @@ from src.render import (  # noqa: E402
     render_chart,
     render_history,
     render_leaderboard,
+    render_lottery_ticket,
     render_market,
 )
 
@@ -33,6 +34,17 @@ def test_renderers_return_png_bytes() -> None:
                 {"rank": 1, "name": "甲", "pnl": 100.0, "equity": 10100.0},
                 {"rank": 2, "name": "乙", "pnl": -50.0, "equity": 9950.0},
             ]
+        ),
+        render_lottery_ticket(
+            {
+                "chosen": 7,
+                "draw": 8,
+                "won": False,
+                "payout": 0.0,
+                "pool_after": 200100.0,
+            },
+            "Tester",
+            200100.0,
         ),
     ):
         assert payload.startswith(b"\x89PNG")
