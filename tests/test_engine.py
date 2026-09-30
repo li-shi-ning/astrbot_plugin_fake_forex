@@ -332,24 +332,33 @@ def test_daily_extra_loan_ceiling() -> None:
     assert loan_limit(account) == 600000
     assert account.debt == 410000
 
-def test_bankruptcy_relief_is_daily_and_leaderboard_neutral() -> None:
+def test_bankruptcy_relief_conditions_and_daily_limit() -> None:
     market = seeded_market()
     account = Account("u", "Tester", cash=0.0, debt=100000.0)
     pnl_before = account.trading_pnl(market)
 
-    result = apply_bankruptcy(account, "2026-01-01")
-
-    assert result["cash"] == 10000.0
+    first = apply_bankruptcy(account, market, "2026-01-01")
+    assert first["cash"] == 10000.0
     assert account.cash == 10000.0
     assert account.debt == 50000.0
     assert account.trading_pnl(market) == pnl_before
+    assert first["remaining_today"] == 2
+
+    apply_bankruptcy(account, market, "2026-01-01")
+    apply_bankruptcy(account, market, "2026-01-01")
+    assert account.debt == 12500.0
 
     try:
-        apply_bankruptcy(account, "2026-01-01")
+        apply_bankruptcy(account, market, "2026-01-01")
     except FxError as exc:
-        assert "今天已经申请过" in str(exc)
+        assert "次数已经用完" in str(exc)
     else:  # pragma: no cover - guard against regression
-        raise AssertionError("bankruptcy relief should be once per day")
+        raise AssertionError("bankruptcy relief should be limited to 3 per day")
 
-    apply_bankruptcy(account, "2026-01-02")
-    assert account.debt == 25000.0
+    healthy = Account("v", "Healthy", cash=50000.0, debt=0.0)
+    try:
+        apply_bankruptcy(healthy, market, "2026-01-01")
+    except FxError as exc:
+        assert "没有达到破产条件" in str(exc)
+    else:  # pragma: no cover - guard against regression
+        raise AssertionError("healthy account should not get bankruptcy relief")

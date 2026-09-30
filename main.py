@@ -512,7 +512,7 @@ class FakeForexPlugin(Star):
                 ),
             )
         if command == "bankruptcy":
-            result = apply_bankruptcy(account, day)
+            result = apply_bankruptcy(account, self.market, day)
             return self._with_notes(
                 notes,
                 CommandOutcome(
@@ -520,6 +520,7 @@ class FakeForexPlugin(Star):
                         f"破产救济已到账：现金恢复到 {money(result['cash'])}，"
                         f"债务从 {money(result['old_debt'])} 降到 "
                         f"{money(result['remaining_debt'])}。\n"
+                        f"今日剩余申请次数：{result['remaining_today']}/3。"
                         "本救济不计入交易盈亏排行榜。"
                     ),
                     buttons=self._account_buttons(),
@@ -615,7 +616,8 @@ class FakeForexPlugin(Star):
             "波动率越高最大杠杆越低；突发新闻会造成跳空；"
             "爆仓额外收 1% 名义仓位罚金；"
             "贷款每 30 分钟按 3% 复利计息；"
-            "基础额度 $200,000，每天额外 +$200,000。"
+            "基础额度 $200,000，每天额外 +$200,000；"
+            "破产申请每天最多 3 次，且现金<=0 或净值<0 时才能申请。"
         )
         return CommandOutcome(text=text, buttons=self._menu_buttons())
 

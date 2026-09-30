@@ -301,15 +301,27 @@ def buy_organ(account: Account, organ_id: str) -> dict[str, Any]:
     }
 
 
-def apply_bankruptcy(account: Account, day: str) -> dict[str, Any]:
-    """Apply the once-per-day bankruptcy relief.
+def is_bankrupt(account: Account, market: Market) -> bool:
+    """Return whether the account meets the bankruptcy relief condition."""
 
-    This deliberately does not touch ``history`` so the trading P/L
-    leaderboard is unaffected by relief money.
+    return account.cash <= 0 or account.equity(market) < 0
+
+
+def apply_bankruptcy(account: Account, market: Market, day: str) -> dict[str, Any]:
+    """Apply one bankruptcy relief.
+
+    The player may apply up to three times per day, but only while the
+    bankruptcy condition is met.  This deliberately does not touch
+    ``history`` so the trading P/L leaderboard is unaffected by relief money.
     """
 
-    if account.relief_day == day:
-        raise FxError("今天已经申请过破产救济了。")
+    if account.relief_day != day:
+        account.relief_day = day
+        account.relief_today = 0
+    if account.relief_today >= 3:
+        raise FxError("今天破产申请次数已经用完了（每天最多 3 次）。")
+    if not is_bankrupt(account, market):
+        raise FxError("你还没有达到破产条件（现金 <= 0 或净值 < 0）。")
     old_debt = account.debt
     account.debt = round(account.debt * 0.5, 2)
     if account.debt <= 0:
@@ -319,13 +331,15 @@ def apply_bankruptcy(account: Account, day: str) -> dict[str, Any]:
         account.loan_last_ts = 0.0
         account.loan_ticks = 0
     account.cash = 10000.0
-    account.relief_day = day
+    account.relief_today += 1
     account.relief_count += 1
     return {
         "old_debt": old_debt,
         "remaining_debt": account.debt,
         "cash": account.cash,
         "count": account.relief_count,
+        "today": account.relief_today,
+        "remaining_today": 3 - account.relief_today,
     }
 
 
@@ -649,7 +663,8 @@ class Position:
             if self.side == 1
             else exit_price * (1 + self.slippage / 100)
         )
-        return self.notional * self.side * (exit_price / self.entry - 1)
+        raw_pnl = self.notional * self.side * (exit_price / self.entry - 1)
+        return max(-self.margin, raw_pnl)
 
     def risk_ratio(self, market: Market) -> float:
         """Return how much of the margin has been lost."""
@@ -707,6 +722,7 @@ class Account:
     organ_sold: list[str] = field(default_factory=list)
     organ_history: list[dict[str, Any]] = field(default_factory=list)
     relief_day: str = ""
+    relief_today: int = 0
     relief_count: int = 0
     margin_default: float = DEFAULT_MARGIN
     leverage_default: int = DEFAULT_LEVERAGE
@@ -744,6 +760,7 @@ class Account:
             "organ_sold": self.organ_sold,
             "organ_history": self.organ_history,
             "relief_day": self.relief_day,
+            "relief_today": self.relief_today,
             "relief_count": self.relief_count,
             "margin_default": self.margin_default,
             "leverage_default": self.leverage_default,
@@ -773,6 +790,7 @@ class Account:
             ),
             organ_history=list(data.get("organ_history") or []),
             relief_day=str(data.get("relief_day") or ""),
+            relief_today=int(data.get("relief_today") or 0),
             relief_count=int(data.get("relief_count") or 0),
             margin_default=max(
                 MIN_MARGIN, float(data.get("margin_default") or DEFAULT_MARGIN)
