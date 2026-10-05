@@ -13,9 +13,11 @@ from src.engine import (  # noqa: E402
     Account,
     FxError,
     apply_bankruptcy,
+    apply_minor_refund,
     INSTRUMENT_DEFS,
     Market,
     PAIR_MAP,
+    Position,
     accrue_interest,
     advance_market,
     borrow,
@@ -27,6 +29,7 @@ from src.engine import (  # noqa: E402
     normalize_pair,
     LOTTERY_BASE_POOL,
     LOTTERY_MAX_POOL,
+    MINOR_REFUND_LOCK_SECONDS,
     loan_limit,
     open_position,
     organ_defs,
@@ -400,3 +403,50 @@ def test_lottery_pool_caps_at_one_million() -> None:
         account, 7, LOTTERY_MAX_POOL - 5000, FixedRng(8)
     )
     assert result["pool_after"] == LOTTERY_MAX_POOL
+
+def test_minor_refund_resets_account_and_locks_purchases() -> None:
+    market = seeded_market()
+    account = Account(
+        "u",
+        "Tester",
+        cash=0.0,
+        debt=100000.0,
+        organ_sold=["heart"],
+        inventory=[{"name": "空气", "price": 1.0}],
+    )
+    account.positions.append(
+        Position(
+            id="test",
+            pair="SMSC",
+            side=1,
+            entry=10.0,
+            margin=100.0,
+            leverage=10,
+            notional=1000.0,
+            opened_ts=0.0,
+        )
+    )
+    pnl_before = account.trading_pnl(market)
+    now = 1000.0
+
+    result = apply_minor_refund(account, market, 10000.0, now=now)
+
+    assert result["cash"] == 10000.0
+    assert account.cash == 10000.0
+    assert account.debt == 0.0
+    assert account.positions
+    assert account.trade_lock_until == now + MINOR_REFUND_LOCK_SECONDS
+    assert account.organ_sold == ["heart"]
+    assert account.inventory
+    assert account.trading_pnl(market) == pnl_before
+
+
+def test_minor_refund_requires_bankruptcy() -> None:
+    market = seeded_market()
+    healthy = Account("u", "Tester", cash=50000.0, debt=0.0)
+    try:
+        apply_minor_refund(healthy, market, 10000.0)
+    except FxError as exc:
+        assert "没有达到未成年退款条件" in str(exc)
+    else:  # pragma: no cover - guard against regression
+        raise AssertionError("healthy account should not get minor refund")

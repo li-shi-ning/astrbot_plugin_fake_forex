@@ -26,6 +26,7 @@ try:
         Market,
         advance_market,
         apply_bankruptcy,
+        apply_minor_refund,
         borrow,
         buy_lottery_ticket,
         buy_organ,
@@ -43,6 +44,7 @@ try:
         repay,
         sell_organ,
         signed_money,
+        trade_lock_remaining,
     )
     from .src.qqofficial import (
         ButtonSpec,
@@ -76,6 +78,7 @@ except ImportError:  # pragma: no cover - direct local import fallback
         Market,
         advance_market,
         apply_bankruptcy,
+        apply_minor_refund,
         borrow,
         buy_lottery_ticket,
         buy_organ,
@@ -92,6 +95,7 @@ except ImportError:  # pragma: no cover - direct local import fallback
         repay,
         sell_organ,
         signed_money,
+        trade_lock_remaining,
     )
     from src.qqofficial import (
         ButtonSpec,
@@ -308,6 +312,12 @@ class FakeForexPlugin(Star):
             yield result
         event.stop_event()
 
+    @filter.command("未成年退款", alias={"申请未成年退款", "未成年保护退款"})
+    async def minor_refund_command(self, event: AstrMessageEvent):
+        async for result in self._handle_command(event, "minor_refund"):
+            yield result
+        event.stop_event()
+
     @filter.command("彩票菜单", alias={"彩票", "彩票帮助", "虚拟彩票"})
     async def lottery_menu_command(self, event: AstrMessageEvent):
         async for result in self._handle_command(event, "lottery_menu"):
@@ -461,6 +471,7 @@ class FakeForexPlugin(Star):
                 ),
             )
         if command in {"long", "short"}:
+            self._ensure_trade_unlocked(account)
             pair_id = self._pair_arg(text)
             if pair_id is None:
                 raise FxError("请带上股票代码或名称，例如：外汇做多 水母水产 500 20。")
@@ -528,7 +539,7 @@ class FakeForexPlugin(Star):
             return self._with_notes(
                 notes,
                 CommandOutcome(
-                    text="账户",
+                    text="账户" + self._trade_lock_suffix(account),
                     image=render_account(account, self.market),
                     buttons=self._account_buttons(),
                 ),
@@ -607,6 +618,20 @@ class FakeForexPlugin(Star):
                         f"{money(result['remaining_debt'])}。\n"
                         f"今日剩余申请次数：{result['remaining_today']}/3。"
                         "本救济不计入交易盈亏排行榜。"
+                    ),
+                    buttons=self._account_buttons(),
+                ),
+            )
+        if command == "minor_refund":
+            result = apply_minor_refund(account, self.market, self.initial_cash)
+            return self._with_notes(
+                notes,
+                CommandOutcome(
+                    text=(
+                        f"未成年退款已到账：现金恢复到 {money(result['cash'])}，"
+                        "债务已清空。\n"
+                        "24 小时内不能购买股票或彩票。"
+                        "本退款不影响器官、背包和交易盈亏排行榜。"
                     ),
                     buttons=self._account_buttons(),
                 ),
@@ -760,6 +785,7 @@ class FakeForexPlugin(Star):
                 ),
             )
         if command == "lottery_buy":
+            self._ensure_trade_unlocked(account)
             match = re.search(r"\d+", text)
             if match is None:
                 raise FxError("请带上 1-100 的数字，例如：买彩票 88。")
@@ -858,6 +884,25 @@ class FakeForexPlugin(Star):
         buttons.append(ButtonSpec("fx_organ_account", "账户", "外汇账户"))
         buttons.append(ButtonSpec("fx_organ_help", "帮助", "外汇帮助"))
         return buttons
+
+    def _trade_lock_suffix(self, account: Account) -> str:
+        remaining = int(trade_lock_remaining(account))
+        if remaining <= 0:
+            return ""
+        hours, remainder = divmod(remaining, 3600)
+        minutes = remainder // 60
+        return f"\n未成年退款保护期剩余 {hours} 小时 {minutes} 分钟"
+
+    def _ensure_trade_unlocked(self, account: Account) -> None:
+        remaining = int(trade_lock_remaining(account))
+        if remaining <= 0:
+            return
+        hours, remainder = divmod(remaining, 3600)
+        minutes = remainder // 60
+        raise FxError(
+            f"未成年退款保护期内，剩余 {hours} 小时 {minutes} 分钟，"
+            "不能购买股票或彩票。"
+        )
 
     def _sorted_listings(self) -> list[dict[str, Any]]:
         return sorted(
@@ -1017,6 +1062,7 @@ class FakeForexPlugin(Star):
             "贷款每 30 分钟按 3% 复利计息；"
             "基础额度 $200,000，每天额外 +$200,000；"
             "破产申请每天最多 3 次，且现金<=0 或净值<0 时才能申请；"
+            "未成年退款：清空负债、现金恢复初始，24 小时不能买股票和彩票；"
             "彩票票价 $100，每张彩票向奖池注入 $10,000，奖池上限 $1,000,000，中奖清空奖池。"
         )
         return CommandOutcome(text=text, buttons=self._menu_buttons())
@@ -1081,6 +1127,7 @@ class FakeForexPlugin(Star):
             ButtonSpec("fx_menu_borrow", "借款", "外汇借款 10000"),
             ButtonSpec("fx_menu_repay", "还款", "外汇还款 5000"),
             ButtonSpec("fx_menu_bankruptcy", "破产申请", "破产申请"),
+            ButtonSpec("fx_menu_minor_refund", "未成年退款", "未成年退款"),
             ButtonSpec("fx_menu_lottery", "彩票", "彩票菜单"),
             ButtonSpec("fx_menu_market", "市场", "市场菜单"),
             ButtonSpec("fx_menu_help", "帮助", "外汇帮助"),
@@ -1164,6 +1211,7 @@ class FakeForexPlugin(Star):
             ButtonSpec("fx_account_history", "历史", "外汇历史"),
             ButtonSpec("fx_account_rank", "排行", "外汇排行"),
             ButtonSpec("fx_account_bankruptcy", "破产申请", "破产申请"),
+            ButtonSpec("fx_account_minor_refund", "未成年退款", "未成年退款"),
             ButtonSpec("fx_account_lottery", "彩票", "彩票菜单"),
             ButtonSpec("fx_account_organs", "器官", "外汇器官"),
             ButtonSpec("fx_account_help", "帮助", "外汇帮助"),

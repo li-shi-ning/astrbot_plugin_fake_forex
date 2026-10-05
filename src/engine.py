@@ -128,6 +128,7 @@ NEWS_CHANCE = 0.0015
 NEWS_MIN = 0.05
 NEWS_MAX = 0.25
 DAILY_EXTRA_LOAN = 200000.0
+MINOR_REFUND_LOCK_SECONDS = 24 * 60 * 60
 LOTTERY_BASE_POOL = 200000.0
 LOTTERY_TICKET_PRICE = 100.0
 LOTTERY_POOL_INCREASE = LOTTERY_TICKET_PRICE * 100
@@ -400,6 +401,42 @@ def buy_lottery_ticket(
     account.lottery_history.insert(0, record)
     del account.lottery_history[20:]
     return record
+
+
+def trade_lock_remaining(account: Account, now: float | None = None) -> float:
+    """Return remaining stock/lottery purchase lock seconds."""
+
+    now = now if now is not None else time.time()
+    return max(0.0, account.trade_lock_until - now)
+
+
+def apply_minor_refund(
+    account: Account,
+    market: Market,
+    initial_cash: float,
+    now: float | None = None,
+) -> dict[str, Any]:
+    """Reset a bankrupt account and apply a 24-hour purchase lock.
+
+    Organs, inventory, and trading history are deliberately left untouched so
+    the trading leaderboard is unaffected.
+    """
+
+    if not is_bankrupt(account, market):
+        raise FxError("你还没有达到未成年退款条件（现金 <= 0 或净值 < 0）。")
+    now = now if now is not None else time.time()
+    account.cash = float(initial_cash)
+    account.debt = 0.0
+    account.loan_principal = 0.0
+    account.loan_rate = 0.0
+    account.loan_last_ts = 0.0
+    account.loan_ticks = 0
+    account.trade_lock_until = now + MINOR_REFUND_LOCK_SECONDS
+    return {
+        "cash": account.cash,
+        "lock_until": account.trade_lock_until,
+        "lock_seconds": MINOR_REFUND_LOCK_SECONDS,
+    }
 
 
 def loan_limit(account: Account) -> float:
@@ -787,6 +824,7 @@ class Account:
     lottery_winnings: float = 0.0
     lottery_win_count: int = 0
     inventory: list[dict[str, Any]] = field(default_factory=list)
+    trade_lock_until: float = 0.0
     margin_default: float = DEFAULT_MARGIN
     leverage_default: int = DEFAULT_LEVERAGE
     positions: list[Position] = field(default_factory=list)
@@ -829,6 +867,7 @@ class Account:
             "lottery_winnings": self.lottery_winnings,
             "lottery_win_count": self.lottery_win_count,
             "inventory": self.inventory,
+            "trade_lock_until": self.trade_lock_until,
             "margin_default": self.margin_default,
             "leverage_default": self.leverage_default,
             "positions": [position.to_dict() for position in self.positions],
@@ -878,6 +917,7 @@ class Account:
             lottery_winnings=lottery_winnings,
             lottery_win_count=lottery_win_count,
             inventory=list(data.get("inventory") or []),
+            trade_lock_until=float(data.get("trade_lock_until") or 0),
             margin_default=max(
                 MIN_MARGIN, float(data.get("margin_default") or DEFAULT_MARGIN)
             ),
