@@ -112,6 +112,10 @@ LIQUIDATION_RATIO = 0.8
 LOAN_MAX = 200000.0
 LOAN_INTEREST_RATE = 0.03
 LOAN_INTEREST_SECONDS = 1800
+PRICE_REVERSION_K = 0.002
+PRICE_REVERSION_BOOST = 5.0
+MAX_REVERSION_STEP = 0.015
+LOG_VOLATILITY = 0.002
 SUPER_SHOCK_CHANCE = 0.006
 SUPER_SHOCK_MIN = 0.08
 SUPER_SHOCK_MAX = 0.45
@@ -513,7 +517,12 @@ def _seed_series(
                 "close": value,
             }
         )
-    return {"id": item["id"], "price": value, "candles": candles}
+    return {
+        "id": item["id"],
+        "price": value,
+        "candles": candles,
+        "anchor": float(item["initial"]),
+    }
 
 
 def _seed_market(rng: random.Random) -> dict[str, Any]:
@@ -529,6 +538,7 @@ class PairSeries:
     id: str
     price: float
     candles: list[dict[str, float]] = field(default_factory=list)
+    anchor: float = 0.0
     regime: float = 0.0
     regime_ticks: int = 0
 
@@ -547,16 +557,23 @@ class PairSeries:
             "id": self.id,
             "price": self.price,
             "candles": self.candles,
+            "anchor": self.anchor,
             "regime": self.regime,
             "regime_ticks": self.regime_ticks,
         }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> PairSeries:
+        price = float(data.get("price") or 0)
+        pair_id = str(data.get("id") or "")
+        anchor = float(data.get("anchor") or 0)
+        if anchor <= 0:
+            anchor = float(PAIR_MAP.get(pair_id, {}).get("initial") or price or 1)
         return cls(
-            id=str(data.get("id") or ""),
-            price=float(data.get("price") or 0),
+            id=pair_id,
+            price=price,
             candles=list(data.get("candles") or []),
+            anchor=anchor,
             regime=float(data.get("regime") or 0),
             regime_ticks=int(data.get("regime_ticks") or 0),
         )
@@ -674,28 +691,36 @@ def tick_market(
     rng: random.Random | None = None,
     now: float | None = None,
 ) -> None:
-    """Advance every pair by one simulated tick."""
+    """Advance every pair by one simulated tick.
+
+    Prices use log returns and a gentle mean-reversion pull toward each
+    instrument's anchor.  This avoids the systematic ``(1+r)(1-r) < 1``
+    downward drift of simple percentage returns.
+    """
 
     rng = rng or random.Random()
     for index, (_pair_id, series) in enumerate(list(market.pairs.items())):
-        open_price = series.price
+        open_price = max(series.price, 1e-9)
+        anchor = series.anchor if series.anchor > 0 else open_price
+
+        # Mean reversion: stronger when price is far from its anchor.
+        distance = math.log(anchor / open_price) if open_price > 0 else 0.0
+        k_eff = PRICE_REVERSION_K * (1 + min(PRICE_REVERSION_BOOST, abs(distance)))
+        recovery = k_eff * distance
+        recovery = max(-MAX_REVERSION_STEP, min(MAX_REVERSION_STEP, recovery))
+
+        log_return = recovery + rng.gauss(0, LOG_VOLATILITY)
+        log_return += math.sin((market.tick + 1) / 8.67 + index * 2) * 0.00012
 
         if rng.random() < SUPER_SHOCK_CHANCE:
             direction = 1 if rng.random() < 0.5 else -1
             magnitude = rng.uniform(SUPER_SHOCK_MIN, SUPER_SHOCK_MAX)
-            close = max(open_price * 0.05, open_price * (1 + direction * magnitude))
-        else:
-            drift = math.sin((market.tick + 1) / 8.67 + index * 2) * 0.00036
-            shock = (rng.random() - 0.5) * 0.019 if rng.random() < 0.018 else 0.0
-            close = max(
-                open_price * 0.5,
-                open_price * (1 + drift + (rng.random() - 0.5) * 0.0042 + shock),
-            )
+            log_return += direction * math.log(1 + magnitude)
 
         if rng.random() < NEWS_CHANCE:
             news_direction = 1 if rng.random() < 0.5 else -1
             news_move = rng.uniform(NEWS_MIN, NEWS_MAX)
-            close = max(close * 0.1, close * (1 + news_direction * news_move))
+            log_return += news_direction * math.log(1 + news_move)
             name = PAIR_MAP.get(_pair_id, {}).get("name", _pair_id)
             market.news.insert(
                 0,
@@ -710,10 +735,10 @@ def tick_market(
                 },
             )
             del market.news[20:]
-        series.regime = 0.0
-        series.regime_ticks = 0
 
-        wick = open_price * (rng.random() * 0.0015 + 0.0002)
+        log_return = max(-1.5, min(1.5, log_return))
+        close = open_price * math.exp(log_return)
+        wick = max(open_price, close) * (rng.random() * 0.0015 + 0.0002)
         series.candles.append(
             {
                 "open": open_price,
@@ -725,6 +750,8 @@ def tick_market(
         if len(series.candles) > CANDLE_LIMIT:
             del series.candles[: len(series.candles) - CANDLE_LIMIT]
         series.price = close
+        series.regime = 0.0
+        series.regime_ticks = 0
     market.tick += 1
     market.last_tick_ts = now if now is not None else time.time()
 

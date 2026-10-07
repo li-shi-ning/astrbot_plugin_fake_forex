@@ -466,3 +466,33 @@ def test_realized_pnl_is_cumulative_after_history_truncation() -> None:
 
     account.history.clear()
     assert account.trading_pnl(market) == record["pnl"]
+
+def test_mean_reversion_slowly_recovers_near_zero_price() -> None:
+    market = seeded_market()
+    series = market.pairs["SMSC"]
+    series.anchor = 10.0
+    series.price = 0.01
+    series.candles = [
+        {"open": 0.01, "high": 0.01, "low": 0.01, "close": 0.01}
+        for _ in range(40)
+    ]
+    old_vol = engine_module.LOG_VOLATILITY
+    old_super = engine_module.SUPER_SHOCK_CHANCE
+    old_news = engine_module.NEWS_CHANCE
+    engine_module.LOG_VOLATILITY = 0.0
+    engine_module.SUPER_SHOCK_CHANCE = 0.0
+    engine_module.NEWS_CHANCE = 0.0
+    try:
+        engine_module.tick_market(market, random.Random(1))
+        first_close = series.price
+        for _ in range(200):
+            engine_module.tick_market(market, random.Random(1))
+    finally:
+        engine_module.LOG_VOLATILITY = old_vol
+        engine_module.SUPER_SHOCK_CHANCE = old_super
+        engine_module.NEWS_CHANCE = old_news
+
+    assert first_close > 0.01
+    assert first_close < 0.02
+    assert series.price > first_close
+    assert series.price < series.anchor
