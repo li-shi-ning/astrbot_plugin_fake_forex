@@ -510,3 +510,34 @@ def test_position_quantity_and_lots_are_derived_from_notional() -> None:
     assert position.notional == 1000
     assert position_quantity(position) == position.notional / position.entry
     assert position_lots(position) == position_quantity(position) / 100
+
+def test_large_callback_moves_halfway_toward_anchor() -> None:
+    market = seeded_market()
+    series = market.pairs["SMSC"]
+    series.anchor = 10.0
+    series.price = 0.01
+    series.candles = [
+        {"open": 0.01, "high": 0.01, "low": 0.01, "close": 0.01}
+        for _ in range(40)
+    ]
+    old_vol = engine_module.LOG_VOLATILITY
+    old_super = engine_module.SUPER_SHOCK_CHANCE
+    old_news = engine_module.NEWS_CHANCE
+    old_base = engine_module.CALLBACK_BASE_CHANCE
+    old_max = engine_module.CALLBACK_MAX_CHANCE
+    engine_module.LOG_VOLATILITY = 0.0
+    engine_module.SUPER_SHOCK_CHANCE = 0.0
+    engine_module.NEWS_CHANCE = 0.0
+    engine_module.CALLBACK_BASE_CHANCE = 1.0
+    engine_module.CALLBACK_MAX_CHANCE = 1.0
+    try:
+        engine_module.tick_market(market, random.Random(1))
+    finally:
+        engine_module.LOG_VOLATILITY = old_vol
+        engine_module.SUPER_SHOCK_CHANCE = old_super
+        engine_module.NEWS_CHANCE = old_news
+        engine_module.CALLBACK_BASE_CHANCE = old_base
+        engine_module.CALLBACK_MAX_CHANCE = old_max
+
+    assert 4.9 < series.price < 5.2
+    assert any("回调大波动" in item["text"] for item in market.news)

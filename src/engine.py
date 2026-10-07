@@ -112,6 +112,9 @@ LIQUIDATION_RATIO = 0.8
 LOAN_MAX = 200000.0
 LOAN_INTEREST_RATE = 0.03
 LOAN_INTEREST_SECONDS = 1800
+CALLBACK_DEVIATION_THRESHOLD = 0.5
+CALLBACK_BASE_CHANCE = 0.01
+CALLBACK_MAX_CHANCE = 0.05
 PRICE_REVERSION_K = 0.002
 PRICE_REVERSION_BOOST = 5.0
 MAX_REVERSION_STEP = 0.015
@@ -738,6 +741,35 @@ def tick_market(
 
         log_return = max(-1.5, min(1.5, log_return))
         close = open_price * math.exp(log_return)
+
+        # Large callback: if price has drifted far from its anchor, there is a
+        # chance it snaps halfway back toward the anchor in one big move.
+        if anchor > 0:
+            deviation = abs(close / anchor - 1)
+            if deviation >= CALLBACK_DEVIATION_THRESHOLD:
+                chance = min(
+                    CALLBACK_MAX_CHANCE,
+                    CALLBACK_BASE_CHANCE * (deviation / CALLBACK_DEVIATION_THRESHOLD),
+                )
+                if rng.random() < chance:
+                    callback_move = abs(anchor - close) / 2
+                    if close < anchor:
+                        close += callback_move
+                    else:
+                        close -= callback_move
+                    name = PAIR_MAP.get(_pair_id, {}).get("name", _pair_id)
+                    market.news.insert(
+                        0,
+                        {
+                            "tick": market.tick,
+                            "pair": _pair_id,
+                            "text": (
+                                f"{name} 价格偏离过大，触发回调大波动，快速向锚点回归"
+                            ),
+                        },
+                    )
+                    del market.news[20:]
+
         wick = max(open_price, close) * (rng.random() * 0.0015 + 0.0002)
         series.candles.append(
             {
