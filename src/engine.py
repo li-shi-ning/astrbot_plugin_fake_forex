@@ -829,6 +829,9 @@ class Account:
     leverage_default: int = DEFAULT_LEVERAGE
     positions: list[Position] = field(default_factory=list)
     history: list[dict[str, Any]] = field(default_factory=list)
+    realized_pnl: float = 0.0
+    trade_count: int = 0
+    liquidation_count: int = 0
     notes: list[str] = field(default_factory=list)
 
     def used_margin(self) -> float:
@@ -841,10 +844,9 @@ class Account:
         return self.cash + self.used_margin() + self.floating_pnl(market) - self.debt
 
     def trading_pnl(self, market: Market) -> float:
-        """Return realized plus floating trading profit/loss."""
+        """Return cumulative realized plus floating trading profit/loss."""
 
-        realized = sum(float(item.get("pnl") or 0) for item in self.history)
-        return realized + self.floating_pnl(market)
+        return self.realized_pnl + self.floating_pnl(market)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -872,11 +874,30 @@ class Account:
             "leverage_default": self.leverage_default,
             "positions": [position.to_dict() for position in self.positions],
             "history": self.history,
+            "realized_pnl": self.realized_pnl,
+            "trade_count": self.trade_count,
+            "liquidation_count": self.liquidation_count,
             "notes": self.notes,
         }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Account:
+        history = list(data.get("history") or [])
+        raw_realized = data.get("realized_pnl")
+        if raw_realized is None:
+            realized_pnl = sum(float(item.get("pnl") or 0) for item in history)
+        else:
+            realized_pnl = float(raw_realized)
+        raw_trade_count = data.get("trade_count")
+        if raw_trade_count is None:
+            trade_count = len(history)
+        else:
+            trade_count = int(raw_trade_count)
+        raw_liquidation_count = data.get("liquidation_count")
+        if raw_liquidation_count is None:
+            liquidation_count = sum(1 for item in history if item.get("liquidated"))
+        else:
+            liquidation_count = int(raw_liquidation_count)
         lottery_history = list(data.get("lottery_history") or [])
         raw_winnings = data.get("lottery_winnings")
         raw_win_count = data.get("lottery_win_count")
@@ -925,7 +946,10 @@ class Account:
             positions=[
                 Position.from_dict(item) for item in list(data.get("positions") or [])
             ],
-            history=list(data.get("history") or []),
+            history=history,
+            realized_pnl=realized_pnl,
+            trade_count=trade_count,
+            liquidation_count=liquidation_count,
             notes=list(data.get("notes") or []),
         )
 
@@ -1023,6 +1047,10 @@ def close_position(
     }
     account.history.insert(0, record)
     del account.history[HISTORY_LIMIT:]
+    account.realized_pnl += record["pnl"]
+    account.trade_count += 1
+    if liquidated:
+        account.liquidation_count += 1
     return record
 
 

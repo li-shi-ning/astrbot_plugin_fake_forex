@@ -586,7 +586,7 @@ class FakeForexPlugin(Star):
         if command == "rank":
             entries: list[dict[str, Any]] = []
             for player in self.accounts.get(group_id, {}).values():
-                realized = sum(float(item.get("pnl") or 0) for item in player.history)
+                realized = player.realized_pnl
                 floating = player.floating_pnl(self.market)
                 entries.append(
                     {
@@ -756,6 +756,11 @@ class FakeForexPlugin(Star):
                 raise FxError("卖家账户不存在。")
             account.cash -= price
             seller.cash += price
+            seller.notes.append(
+                f"你的商品 #{listing_id} {listing.get('name')} "
+                f"已被 {account.name} 买走，到账 {money(price)}。"
+            )
+            del seller.notes[:-20]
             account.inventory.append(
                 {
                     "name": str(listing.get("name") or "商品"),

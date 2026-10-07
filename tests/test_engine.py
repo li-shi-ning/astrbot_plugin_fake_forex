@@ -450,3 +450,19 @@ def test_minor_refund_requires_bankruptcy() -> None:
         assert "没有达到未成年退款条件" in str(exc)
     else:  # pragma: no cover - guard against regression
         raise AssertionError("healthy account should not get minor refund")
+
+def test_realized_pnl_is_cumulative_after_history_truncation() -> None:
+    market = seeded_market()
+    account = Account("u", "Tester")
+    series = market.pairs["SMSC"]
+    set_flat_price(series, 1.0)
+
+    position = open_position(account, market, "SMSC", 1, 100, 10)
+    series.price = 1.1
+    record = close_position(account, market, position.id)
+
+    assert account.realized_pnl == record["pnl"]
+    assert account.trade_count == 1
+
+    account.history.clear()
+    assert account.trading_pnl(market) == record["pnl"]
