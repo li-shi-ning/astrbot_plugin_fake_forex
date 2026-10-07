@@ -113,11 +113,11 @@ LOAN_MAX = 200000.0
 LOAN_INTEREST_RATE = 0.03
 LOAN_INTEREST_SECONDS = 1800
 CALLBACK_DEVIATION_THRESHOLD = 0.5
-CALLBACK_BASE_CHANCE = 0.01
-CALLBACK_MAX_CHANCE = 0.05
-PRICE_REVERSION_K = 0.002
-PRICE_REVERSION_BOOST = 5.0
-MAX_REVERSION_STEP = 0.015
+CALLBACK_BASE_CHANCE = 0.000001
+CALLBACK_MAX_CHANCE = 0.000005
+PRICE_REVERSION_K = 0.0005
+PRICE_REVERSION_BOOST = 3.0
+MAX_REVERSION_STEP = 0.002
 LOG_VOLATILITY = 0.002
 SUPER_SHOCK_CHANCE = 0.006
 SUPER_SHOCK_MIN = 0.08
@@ -763,9 +763,7 @@ def tick_market(
                         {
                             "tick": market.tick,
                             "pair": _pair_id,
-                            "text": (
-                                f"{name} 价格偏离过大，触发回调大波动，快速向锚点回归"
-                            ),
+                            "text": f"市场的大手发力了，对{name}进行调整",
                         },
                     )
                     del market.news[20:]

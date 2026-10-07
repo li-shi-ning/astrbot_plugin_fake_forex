@@ -540,4 +540,4 @@ def test_large_callback_moves_halfway_toward_anchor() -> None:
         engine_module.CALLBACK_MAX_CHANCE = old_max
 
     assert 4.9 < series.price < 5.2
-    assert any("回调大波动" in item["text"] for item in market.news)
+    assert any("市场的大手发力了" in item["text"] for item in market.news)
