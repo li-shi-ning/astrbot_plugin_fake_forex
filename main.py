@@ -120,6 +120,7 @@ except ImportError:  # pragma: no cover - direct local import fallback
 
 PLUGIN_NAME = "astrbot_plugin_fake_forex"
 BEIJING_TZ = timezone(timedelta(hours=8))
+LEADERBOARD_BASELINE_VERSION = 2
 STATE_FILENAME = "fx_state.json"
 
 
@@ -192,6 +193,18 @@ class FakeForexPlugin(Star):
                 for group_id, players in groups.items()
                 if isinstance(players, dict)
             }
+        baseline_version = (
+            int(state.get("leaderboard_baseline_version") or 0)
+            if isinstance(state, dict)
+            else 0
+        )
+        if baseline_version < LEADERBOARD_BASELINE_VERSION:
+            migrated = self._recalculate_leaderboard_baseline()
+            logger.info(
+                "[FakeForex] leaderboard baseline migrated for %s accounts",
+                migrated,
+            )
+            await self._save_state()
         logger.info("[FakeForex] initialized: %s", self.store.path)
 
     async def terminate(self) -> None:
@@ -890,6 +903,24 @@ class FakeForexPlugin(Star):
         buttons.append(ButtonSpec("fx_organ_help", "帮助", "外汇帮助"))
         return buttons
 
+    def _recalculate_leaderboard_baseline(self) -> int:
+        """One-time migration: rebase cumulative P/L on current equity.
+
+        Non-stock income is intentionally not separated for this one-time
+        migration.  Afterwards only stock trades update realized_pnl.
+        """
+
+        migrated = 0
+        for players in self.accounts.values():
+            for account in players.values():
+                floating = account.floating_pnl(self.market)
+                account.realized_pnl = round(
+                    account.equity(self.market) - self.initial_cash - floating,
+                    2,
+                )
+                migrated += 1
+        return migrated
+
     def _trade_lock_suffix(self, account: Account) -> str:
         remaining = int(trade_lock_remaining(account))
         if remaining <= 0:
@@ -1263,6 +1294,7 @@ class FakeForexPlugin(Star):
         await self.store.save(
             {
                 "market": self.market.to_dict(),
+                "leaderboard_baseline_version": LEADERBOARD_BASELINE_VERSION,
                 "lottery_pool": self.lottery_pool,
                 "market_listings": self.market_listings,
                 "next_listing_id": self.next_listing_id,

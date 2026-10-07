@@ -229,3 +229,15 @@ def test_marketplace_pagination_layout(tmp_path: Path) -> None:
     assert [item.label for item in page_one[-3:]] == ["上一页", "第 1/2 页", "下一页"]
     assert len(page_two) == 4
     assert [item.label for item in page_two[-3:]] == ["上一页", "第 2/2 页", "下一页"]
+
+def test_leaderboard_baseline_recalculates_from_current_equity(tmp_path: Path) -> None:
+    with patch.object(plugin_main.StarTools, "get_data_dir", return_value=tmp_path):
+        plugin = plugin_main.FakeForexPlugin(context=SimpleNamespace(), config={"tick_seconds": 3600, "initial_cash": 10000})
+    account = plugin_main.Account("u", "Tester", cash=15000.0, debt=0.0)
+    plugin.accounts = {"group-id": {"u": account}}
+
+    migrated = plugin._recalculate_leaderboard_baseline()
+
+    assert migrated == 1
+    assert account.realized_pnl == 5000.0
+    assert account.trading_pnl(plugin.market) == 5000.0
