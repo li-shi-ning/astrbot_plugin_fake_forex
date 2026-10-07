@@ -830,6 +830,25 @@ class Position:
         )
 
 
+LOT_SIZE = 100
+
+
+def position_quantity(position: Position) -> float:
+    """Return the implied share/unit quantity of a position."""
+
+    if position.entry <= 0:
+        return 0.0
+    return position.notional / position.entry
+
+
+def position_lots(position: Position, lot_size: int = LOT_SIZE) -> float:
+    """Return the position size in lots (1 lot = ``lot_size`` shares)."""
+
+    if lot_size <= 0:
+        return 0.0
+    return position_quantity(position) / lot_size
+
+
 @dataclass
 class Account:
     user_id: str

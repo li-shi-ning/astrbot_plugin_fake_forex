@@ -32,6 +32,8 @@ from src.engine import (  # noqa: E402
     MINOR_REFUND_LOCK_SECONDS,
     loan_limit,
     open_position,
+    position_lots,
+    position_quantity,
     organ_defs,
     register_instrument,
     repay,
@@ -496,3 +498,15 @@ def test_mean_reversion_slowly_recovers_near_zero_price() -> None:
     assert first_close < 0.02
     assert series.price > first_close
     assert series.price < series.anchor
+
+def test_position_quantity_and_lots_are_derived_from_notional() -> None:
+    market = seeded_market()
+    account = Account("u", "Tester")
+    series = market.pairs["SMSC"]
+    set_flat_price(series, 10.0)
+
+    position = open_position(account, market, "SMSC", 1, 100, 10)
+
+    assert position.notional == 1000
+    assert position_quantity(position) == position.notional / position.entry
+    assert position_lots(position) == position_quantity(position) / 100

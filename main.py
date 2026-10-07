@@ -15,6 +15,7 @@ from astrbot.api.star import Context, Star, StarTools, register
 
 try:
     from .src.engine import (
+        LOT_SIZE,
         LOTTERY_BASE_POOL,
         LOTTERY_MAX_POOL,
         LOTTERY_POOL_INCREASE,
@@ -39,6 +40,8 @@ try:
         open_position,
         organ_defs,
         organ_income_total,
+        position_lots,
+        position_quantity,
         price_text,
         register_instrument,
         repay,
@@ -67,6 +70,7 @@ try:
     from .src.storage import FxStore
 except ImportError:  # pragma: no cover - direct local import fallback
     from src.engine import (
+        LOT_SIZE,
         LOTTERY_BASE_POOL,
         LOTTERY_MAX_POOL,
         LOTTERY_POOL_INCREASE,
@@ -507,6 +511,8 @@ class FakeForexPlugin(Star):
                         f"已开仓 {position.pair} {position.side_label} "
                         f"保证金 {money(position.margin)} ×{position.leverage} "
                         f"开仓价 {price_text(position.pair, position.entry)} "
+                        f"数量约 {position_quantity(position):,.2f} 股 / "
+                        f"{position_lots(position):,.2f} 手（1手={LOT_SIZE}股）"
                         f"浮动盈亏 {signed_money(pnl)}"
                     ),
                     buttons=self._position_action_buttons(account, position.id),

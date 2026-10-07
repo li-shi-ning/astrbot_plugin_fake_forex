@@ -13,6 +13,7 @@ from .engine import (
     Market,
     money,
     organ_income_total,
+    position_quantity,
     price_text,
     signed_money,
 )
@@ -284,49 +285,57 @@ def render_account(account: Account, market: Market) -> bytes:
         _text(draw, (28, header_top + 36), "暂无持仓", font=_font(15), fill=MUTED)
         return _png_bytes(image)
 
-    _text(draw, (28, header_top + 32), "编号", font=_font(13), fill=MUTED)
-    _text(draw, (170, header_top + 32), "股票", font=_font(13), fill=MUTED)
-    _text(draw, (300, header_top + 32), "方向", font=_font(13), fill=MUTED)
-    _text(draw, (390, header_top + 32), "保证金", font=_font(13), fill=MUTED)
-    _text(draw, (540, header_top + 32), "开仓价", font=_font(13), fill=MUTED)
-    _text(draw, (680, header_top + 32), "当前价", font=_font(13), fill=MUTED)
-    _text(draw, (800, header_top + 32), "盈亏", font=_font(13), fill=MUTED)
+    _text(draw, (28, header_top + 32), "编号", font=_font(12), fill=MUTED)
+    _text(draw, (120, header_top + 32), "股票", font=_font(12), fill=MUTED)
+    _text(draw, (225, header_top + 32), "方向", font=_font(12), fill=MUTED)
+    _text(draw, (300, header_top + 32), "保证金/杠杆", font=_font(12), fill=MUTED)
+    _text(draw, (430, header_top + 32), "数量", font=_font(12), fill=MUTED)
+    _text(draw, (560, header_top + 32), "开仓价", font=_font(12), fill=MUTED)
+    _text(draw, (680, header_top + 32), "当前价", font=_font(12), fill=MUTED)
+    _text(draw, (820, header_top + 32), "盈亏", font=_font(12), fill=MUTED)
     for index, position in enumerate(positions):
         top = header_top + 58 + index * 44
         pnl = position.pnl(market)
         color = GREEN if pnl >= 0 else RED
         draw.rounded_rectangle((20, top, WIDTH - 20, top + 38), radius=8, fill=PANEL)
-        _text(draw, (28, top + 10), position.id, font=_font(12), fill=MUTED)
-        _text(draw, (170, top + 9), position.pair, font=_font(14, True), fill=TEXT)
+        _text(draw, (28, top + 10), position.id, font=_font(11), fill=MUTED)
+        _text(draw, (120, top + 9), position.pair, font=_font(13, True), fill=TEXT)
         _text(
             draw,
-            (300, top + 9),
+            (225, top + 9),
             "做多" if position.side == 1 else "做空",
-            font=_font(13, True),
+            font=_font(12, True),
             fill=GREEN if position.side == 1 else RED,
         )
         _text(
             draw,
-            (390, top + 9),
+            (300, top + 9),
             f"${position.margin:,.0f} x{position.leverage}",
-            font=_font(13),
+            font=_font(12),
             fill=TEXT,
         )
         _text(
             draw,
-            (540, top + 9),
+            (430, top + 9),
+            f"{position_quantity(position):,.0f}股",
+            font=_font(12),
+            fill=TEXT,
+        )
+        _text(
+            draw,
+            (560, top + 9),
             price_text(position.pair, position.entry),
-            font=_font(13),
+            font=_font(12),
             fill=TEXT,
         )
         _text(
             draw,
             (680, top + 9),
             price_text(position.pair, market.price(position.pair)),
-            font=_font(13),
+            font=_font(12),
             fill=TEXT,
         )
-        _text(draw, (800, top + 9), signed_money(pnl), font=_font(13, True), fill=color)
+        _text(draw, (820, top + 9), signed_money(pnl), font=_font(12, True), fill=color)
     return _png_bytes(image)
 
 
